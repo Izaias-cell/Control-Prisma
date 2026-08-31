@@ -1,4 +1,6 @@
-import app from '../server';
+import { createExpressApp } from '../server.ts';
+
+const app = createExpressApp();
 
 export default function handler(req: any, res: any) {
   // Garantir que a URL recebida via Vercel Serverless Function preserve o caminho original esperado pelo Express
