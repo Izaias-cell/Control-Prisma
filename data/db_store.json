@@ -1756,7 +1756,7 @@
       "condominioId": "condo-1",
       "tipoAcesso": "ADMIN",
       "identificador": "admin.teste",
-      "senhaHash": "$argon2id$v=19$m=65536,p=1,t=3$VgR5X73Sw01nU7ANZ00Afg$nstivDfl11iM4glU79KTPCKSsBnwZzx/QtrKdyQBu0k",
+      "senhaHash": "$argon2id$v=19$m=65536,p=1,t=3$0a77v1ZQ9QIbc0MlL0Z0cA$OM2ia6IjN2KSgtEMIQdubTIhMma1pi1yMoAN7XISbu8",
       "pinHash": null,
       "ativo": true,
       "bloqueado": false,
