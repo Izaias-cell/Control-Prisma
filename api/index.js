@@ -2,7 +2,6 @@
 import express from "express";
 import path2 from "path";
 import cookieParser from "cookie-parser";
-import { createServer as createViteServer } from "vite";
 
 // src/types.ts
 var DEFAULT_PORTARIA_STATION_ID = "PORTARIA-01";
@@ -4848,7 +4847,8 @@ async function startServer() {
   if (process.env.VERCEL === "1" || process.env.NOW_REGION) {
     return;
   }
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa"

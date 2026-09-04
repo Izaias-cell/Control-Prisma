@@ -309,9 +309,95 @@
       "excluido": false,
       "createdAt": "2026-08-28T19:19:42.958Z",
       "updatedAt": "2026-08-28T20:03:27.179Z"
+    },
+    {
+      "id": "prism-1788492057891-ddz8",
+      "condominioId": "condo-1",
+      "numero": "04",
+      "corId": "amarelo",
+      "corNome": "Amarelo",
+      "estado": "EM_USO",
+      "ativo": true,
+      "excluido": false,
+      "createdAt": "2026-09-04T03:20:57.891Z",
+      "updatedAt": "2026-09-04T03:28:06.699Z",
+      "movimentacaoAtualId": "mov-1788492486699-bc9g",
+      "casaAtual": "426",
+      "horarioEntregaAtual": "2026-09-04T03:28:06.699Z",
+      "porteiroEntregaAtual": "ADMIN TESTE"
+    },
+    {
+      "id": "prism-1788492183283-7ccl",
+      "condominioId": "condo-1",
+      "numero": "02",
+      "corId": "verde",
+      "corNome": "Verde",
+      "estado": "DISPONIVEL",
+      "ativo": true,
+      "excluido": false,
+      "createdAt": "2026-09-04T03:23:03.283Z",
+      "updatedAt": "2026-09-04T03:23:03.283Z"
     }
   ],
   "movimentacoes": [
+    {
+      "id": "mov-1788492486699-bc9g",
+      "condominioId": "condo-1",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "tipo": "ENTREGA",
+      "casa": "426",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "turnoId": "tur-padrao",
+      "turnoNome": "Turno Geral",
+      "dataHora": "2026-09-04T03:28:06.699Z",
+      "estadoAnterior": "DISPONIVEL",
+      "estadoPosterior": "EM_USO",
+      "encerrada": false
+    },
+    {
+      "id": "mov-1788492299921-auu8",
+      "condominioId": "condo-1",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "tipo": "DEVOLUCAO",
+      "casa": "426",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "turnoId": "tur-padrao",
+      "turnoNome": "Turno Geral",
+      "dataHora": "2026-09-04T03:24:59.921Z",
+      "estadoAnterior": "EM_USO",
+      "estadoPosterior": "DISPONIVEL",
+      "movimentacaoAnteriorId": "mov-1788492241043-dcsf",
+      "encerrada": true,
+      "dataHoraEncerramento": "2026-09-04T03:24:59.921Z",
+      "usuarioEncerramentoId": "usr-admin-teste",
+      "usuarioEncerramentoNome": "ADMIN TESTE"
+    },
+    {
+      "id": "mov-1788492241043-dcsf",
+      "condominioId": "condo-1",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "tipo": "ENTREGA",
+      "casa": "426",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "turnoId": "tur-padrao",
+      "turnoNome": "Turno Geral",
+      "dataHora": "2026-09-04T03:24:01.043Z",
+      "estadoAnterior": "DISPONIVEL",
+      "estadoPosterior": "EM_USO",
+      "encerrada": true,
+      "dataHoraEncerramento": "2026-09-04T03:24:59.921Z",
+      "usuarioEncerramentoId": "usr-admin-teste",
+      "usuarioEncerramentoNome": "ADMIN TESTE"
+    },
     {
       "id": "mov-1787947411035-uz3q",
       "condominioId": "condo-1",
@@ -888,6 +974,85 @@
     }
   ],
   "auditoria": [
+    {
+      "id": "aud-1788492493734-02bm",
+      "condominioId": "condo-1",
+      "acao": "ENTREGA_PRISMA",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "dataHora": "2026-09-04T03:28:13.734Z",
+      "detalhes": "Prisma 04 entregue para a residência 426",
+      "dadosNovos": {
+        "casa": "426",
+        "movimentacaoId": "mov-1788492486699-bc9g"
+      }
+    },
+    {
+      "id": "aud-1788492306954-4kj2",
+      "condominioId": "condo-1",
+      "acao": "DEVOLUCAO_PRISMA",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "dataHora": "2026-09-04T03:25:06.954Z",
+      "detalhes": "Prisma 04 devolvido da residência 426",
+      "dadosNovos": {
+        "devolvidoDe": "426"
+      }
+    },
+    {
+      "id": "aud-1788492248079-ovtl",
+      "condominioId": "condo-1",
+      "acao": "ENTREGA_PRISMA",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "dataHora": "2026-09-04T03:24:08.079Z",
+      "detalhes": "Prisma 04 entregue para a residência 426",
+      "dadosNovos": {
+        "casa": "426",
+        "movimentacaoId": "mov-1788492241043-dcsf"
+      }
+    },
+    {
+      "id": "aud-1788492190314-pfun",
+      "condominioId": "condo-1",
+      "acao": "CRIACAO_PRISMA",
+      "prismaId": "prism-1788492183283-7ccl",
+      "prismaNumero": "02",
+      "prismaCorNome": "Verde",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "dataHora": "2026-09-04T03:23:10.314Z",
+      "detalhes": "Novo prisma cadastrado: Nº 02 (Cor: Verde)",
+      "dadosNovos": {
+        "numero": "02",
+        "cor": "Verde"
+      }
+    },
+    {
+      "id": "aud-1788492064922-7ofd",
+      "condominioId": "condo-1",
+      "acao": "CRIACAO_PRISMA",
+      "prismaId": "prism-1788492057891-ddz8",
+      "prismaNumero": "04",
+      "prismaCorNome": "Amarelo",
+      "usuarioId": "usr-admin-teste",
+      "usuarioNome": "ADMIN TESTE",
+      "dataHora": "2026-09-04T03:21:04.922Z",
+      "detalhes": "Novo prisma cadastrado: Nº 04 (Cor: Amarelo)",
+      "dadosNovos": {
+        "numero": "04",
+        "cor": "Amarelo"
+      }
+    },
     {
       "id": "aud-1787948733910-ihke",
       "condominioId": "condo-2",
@@ -1760,8 +1925,8 @@
       "pinHash": null,
       "ativo": true,
       "bloqueado": false,
-      "tentativasInvalidas": 0,
-      "ultimoLogin": "2026-09-03T21:29:46.361Z",
+      "tentativasInvalidas": 2,
+      "ultimoLogin": "2026-09-04T03:40:52.309Z",
       "ultimoBloqueio": null,
       "createdAt": "2026-08-22T12:00:00.000Z",
       "updatedAt": "2026-08-22T12:00:00.000Z"
@@ -1792,7 +1957,7 @@
       "pinHash": null,
       "ativo": true,
       "bloqueado": false,
-      "tentativasInvalidas": 1,
+      "tentativasInvalidas": 2,
       "ultimoLogin": "2026-08-23T09:31:17.712Z",
       "ultimoBloqueio": null,
       "createdAt": "2026-08-22T19:57:09.871Z",
@@ -1857,7 +2022,7 @@
       "ativo": true,
       "bloqueado": false,
       "tentativasInvalidas": 0,
-      "ultimoLogin": "2026-08-28T20:25:35.378Z",
+      "ultimoLogin": "2026-09-04T02:54:12.917Z",
       "ultimoBloqueio": null,
       "createdAt": "2026-08-26T21:14:26.766Z",
       "updatedAt": "2026-08-26T21:14:26.766Z"
