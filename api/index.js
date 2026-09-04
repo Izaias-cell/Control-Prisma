@@ -4872,7 +4872,7 @@ if (isMainProcess && process.env.VERCEL !== "1" && !process.env.NOW_REGION) {
   });
 }
 
-// api/index.ts
+// src/api/handler.ts
 var app2 = createExpressApp();
 function handler(req, res) {
   const rawUrl = typeof req.url === "string" ? req.url : "";
