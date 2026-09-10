@@ -9,7 +9,6 @@ import {
   Camera,
   AlertCircle,
   Search,
-  X,
 } from 'lucide-react';
 
 interface ReceberViewProps {
@@ -29,9 +28,7 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
   onOpenHistorico,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPrisma, setSelectedPrisma] = useState<Prisma | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
+  const [processingPrismaId, setProcessingPrismaId] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
   const filtered = React.useMemo(() => {
@@ -65,34 +62,19 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
     return `Há ${hours}h ${mins}m`;
   };
 
-  // Abrir modal de confirmação ao clicar no CARD ou no botão
-  const handleOpenRecolhimentoModal = (prisma: Prisma) => {
-    if (isSubmitting || isLoading) return;
-    setModalError(null);
-    setSelectedPrisma(prisma);
-  };
+  // Baixa direta e imediata pelo CARD ou pelo botão interno
+  const handleBaixaDireta = async (prisma: Prisma) => {
+    if (processingPrismaId || isLoading) return;
 
-  // Cancelar devolução
-  const handleCloseModal = () => {
-    if (isSubmitting) return;
-    setSelectedPrisma(null);
-    setModalError(null);
-  };
-
-  // Confirmar devolução (Modo Contínuo pelo CARD -> permanece em RECOLHER)
-  const handleConfirmDevolucao = async () => {
-    if (!selectedPrisma || isSubmitting || isLoading) return;
-
-    setIsSubmitting(true);
-    setModalError(null);
+    setProcessingPrismaId(prisma.id);
+    setGlobalError(null);
     try {
       // origin: 'CARD' garante explicitamente que a navegação permanece em 'RECEBER'
-      await onReceberPrisma(selectedPrisma.id, { origin: 'CARD' });
-      setSelectedPrisma(null);
+      await onReceberPrisma(prisma.id, { origin: 'CARD' });
     } catch (err: any) {
-      setModalError(err.message || 'Erro ao registrar devolução do prisma.');
+      setGlobalError(err.message || 'Erro ao registrar devolução do prisma.');
     } finally {
-      setIsSubmitting(false);
+      setProcessingPrismaId(null);
     }
   };
 
@@ -144,21 +126,21 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
           {filtered.map((prisma) => {
-            const isBeingProcessed = isSubmitting && selectedPrisma?.id === prisma.id;
+            const isBeingProcessed = processingPrismaId === prisma.id;
+            const isAnyProcessing = processingPrismaId !== null || isLoading;
 
             return (
               <div
                 key={prisma.id}
                 id={`card-recolher-${prisma.id}`}
-                onClick={() => handleOpenRecolhimentoModal(prisma)}
-                className="bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-400 rounded-xl p-3 sm:p-3.5 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between cursor-pointer group"
+                onClick={() => handleBaixaDireta(prisma)}
+                className={`bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-400 rounded-xl p-3 sm:p-3.5 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between cursor-pointer group ${
+                  isAnyProcessing ? 'pointer-events-none opacity-80' : ''
+                }`}
               >
                 <div>
-                  {/* Top Bar: Color Name (left) and EM USO (right) */}
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-800">
-                      {prisma.corNome.toUpperCase()}
-                    </span>
+                  {/* Top Bar: Status EM USO */}
+                  <div className="flex items-center justify-end mb-1.5">
                     <span className="text-[10px] sm:text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.2 rounded-full uppercase">
                       EM USO
                     </span>
@@ -206,183 +188,33 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
                 </div>
 
                 {/* Bottom Action: Instant Recolher / Baixa */}
-                <div className="pt-1.5 mt-1 border-t border-slate-100 flex items-center gap-1.5">
+                <div className="pt-1.5 mt-1 border-t border-slate-100 relative flex items-center justify-center min-h-[28px]">
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       onOpenHistorico(prisma);
                     }}
-                    className="py-2 px-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                    className="absolute left-0 py-1.5 px-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                     title="Ver histórico do prisma"
                   >
                     Histórico
                   </button>
 
-                  <button
-                    id={`btn-confirmar-recolhimento-${prisma.id}`}
-                    type="button"
-                    disabled={isLoading || isSubmitting}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenRecolhimentoModal(prisma);
-                    }}
-                    className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-lg shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    {isBeingProcessed ? (
-                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>RECOLHER PRISMA</span>
-                      </>
-                    )}
-                  </button>
+                  {isBeingProcessed ? (
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-blue-600">
+                      <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      <span>Dando baixa...</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs font-medium text-slate-500 text-center">
+                      Clique no card para dar baixa
+                    </span>
+                  )}
                 </div>
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* =========================================================================
-          MODAL DE DEVOLUÇÃO / RECOLHIMENTO (INICIADO PELO CARD DO PRISMA)
-          ========================================================================= */}
-      {selectedPrisma && (
-        <div
-          id="modal-devolucao-prisma-backdrop"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !isSubmitting) {
-              handleCloseModal();
-            }
-          }}
-        >
-          <div
-            id="modal-devolucao-prisma"
-            className="bg-white w-full max-w-md rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/80">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
-                  <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900 tracking-tight">
-                    Recolhimento de Prisma
-                  </h3>
-                  <p className="text-xs text-slate-500 font-medium">
-                    Confirmar devolução na portaria
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleCloseModal}
-                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                title="Fechar"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-5 space-y-4">
-              {/* Prisma Highlight Info */}
-              <div className="flex items-center gap-4 p-3.5 bg-blue-50/60 border border-blue-100 rounded-xl">
-                <PrismaVisual
-                  numero={selectedPrisma.numero}
-                  corIdOrNome={selectedPrisma.corNome}
-                  size="md"
-                  className="flex-shrink-0 shadow-xs"
-                />
-
-                <div className="min-w-0">
-                  <span className="text-[11px] font-black uppercase text-blue-700 tracking-wider">
-                    {selectedPrisma.corNome}
-                  </span>
-                  <h4 className="text-xl font-black text-slate-900 leading-tight">
-                    PRISMA {selectedPrisma.numero}
-                  </h4>
-                  <div className="flex items-center gap-1.5 text-sm font-black text-slate-800 mt-1">
-                    <Home className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                    <span>{selectedPrisma.casaAtual || 'Casa N/A'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Time Metadata */}
-              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs space-y-1.5">
-                <div className="flex items-center justify-between text-slate-600">
-                  <span className="flex items-center gap-1.5 text-slate-500">
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
-                    Horário da entrega:
-                  </span>
-                  <span className="font-bold text-slate-800">
-                    {getTimeFormatted(selectedPrisma.horarioEntregaAtual) || 'Registrado'}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between text-slate-600">
-                  <span className="text-slate-500">Tempo decorrido:</span>
-                  <span className="font-bold text-blue-800 bg-blue-100/70 px-2 py-0.5 rounded text-[11px]">
-                    {getElapsed(selectedPrisma.horarioEntregaAtual) || 'Em uso'}
-                  </span>
-                </div>
-
-                {selectedPrisma.fotoEntregaAtual && (
-                  <div className="pt-1 border-t border-slate-200/60 flex items-center gap-1.5 text-indigo-700 font-semibold text-xs">
-                    <Camera className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>Evidência fotográfica registrada na entrega</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Error in modal if any */}
-              {modalError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                  <span>{modalError}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="px-5 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleCloseModal}
-                className="px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-              >
-                CANCELAR
-              </button>
-
-              <button
-                id="btn-confirmar-modal-devolucao"
-                type="button"
-                disabled={isSubmitting || isLoading}
-                onClick={handleConfirmDevolucao}
-                className="px-5 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 min-w-[170px]"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>REGISTRANDO...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
-                    <span>CONFIRMAR ENTREGA</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>

@@ -980,7 +980,7 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
                       Quando ativado, o sistema copiará automaticamente a mensagem de entrega e recolhimento do prisma.
                     </p>
                     <div className="text-[11px] text-slate-400 font-mono pt-1">
-                      Exemplos: <span className="text-emerald-400 font-semibold">CASA 426 RETIROU PRISMA 11 (AMARELO).</span> • <span className="text-emerald-400 font-semibold">CASA 426 ENTREGOU PRISMA 11 (AMARELO).</span>
+                      Exemplos: <span className="text-emerald-400 font-semibold">CASA 426 RETIROU PRISMA 11.</span> • <span className="text-emerald-400 font-semibold">CASA 426 ENTREGOU PRISMA 11.</span>
                     </div>
                   </div>
 

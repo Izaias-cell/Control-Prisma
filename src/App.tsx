@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Prisma,
   PrismaEstado,
@@ -8,6 +8,7 @@ import {
   Condominio,
   DashboardStats,
   UserRole,
+  TipoSessao,
 } from './types';
 import { api, DashboardResponse, getStoredStationSession } from './services/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -96,19 +97,8 @@ function AppContent() {
     return 'NORMAL';
   });
 
-  // First run modal: only show on PC (>= 768px) when no preference is saved yet
-  const [isEscolhaModoOpen, setIsEscolhaModoOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'portaria-popup') return false;
-    try {
-      const saved = localStorage.getItem('prismas_device_mode');
-      if (!saved && window.innerWidth >= 768) {
-        return true;
-      }
-    } catch {}
-    return false;
-  });
+  // Modal de escolha de modo de uso do dispositivo (acionado no login da Portaria ou pelo Header)
+  const [isEscolhaModoOpen, setIsEscolhaModoOpen] = useState<boolean>(false);
 
   const [isModoPortariaOpen, setIsModoPortariaOpen] = useState<boolean>(() => {
     try {
@@ -120,32 +110,102 @@ function AppContent() {
     return false;
   });
 
+  // Rastreamento seguro do ciclo de vida da autenticação pós-login
+  const initialAuthCheckedRef = useRef<boolean>(false);
+  const prevUserRef = useRef<typeof authUser>(authUser);
+
+  useEffect(() => {
+    // Aguarda validação inicial do contexto de autenticação
+    if (isAuthLoading) {
+      return;
+    }
+
+    // Inicialização da sessão já existente (ex: recarregamento de página / cache restaurado)
+    if (!initialAuthCheckedRef.current) {
+      initialAuthCheckedRef.current = true;
+      prevUserRef.current = authUser;
+
+      if (authUser) {
+        const isAdminOrSindico =
+          authUser.role === UserRole.ADMIN ||
+          authUser.role === UserRole.SINDICO ||
+          authUser.tipoSessao === TipoSessao.ADMIN ||
+          authUser.tipoSessao === TipoSessao.SINDICO;
+
+        if (isAdminOrSindico) {
+          // REGRA 1: ADMIN/SÍNDICO entra diretamente no Dashboard, sem modal ou pop-up
+          setIsEscolhaModoOpen(false);
+          setIsModoPortariaOpen(false);
+        }
+        // Para PORTARIA já restaurada: não abre o modal novamente (REGRA 6)
+      }
+      return;
+    }
+
+    // Caso o usuário deslogue
+    if (!isAuthenticated || !authUser) {
+      prevUserRef.current = null;
+      setIsEscolhaModoOpen(false);
+      return;
+    }
+
+    // Detecta se ocorreu um novo login explícito nesta sessão
+    const isNovoLogin = !prevUserRef.current || prevUserRef.current.usuarioId !== authUser.usuarioId;
+    prevUserRef.current = authUser;
+
+    const isAdminOrSindico =
+      authUser.role === UserRole.ADMIN ||
+      authUser.role === UserRole.SINDICO ||
+      authUser.tipoSessao === TipoSessao.ADMIN ||
+      authUser.tipoSessao === TipoSessao.SINDICO;
+
+    const isPortaria =
+      authUser.role === UserRole.PORTEIRO ||
+      authUser.tipoSessao === TipoSessao.PORTARIA;
+
+    if (isAdminOrSindico) {
+      // REGRA 1: ADMIN/SÍNDICO entra diretamente no Dashboard
+      setIsEscolhaModoOpen(false);
+      setIsModoPortariaOpen(false);
+    } else if (isPortaria && isNovoLogin) {
+      // REGRA 2: PORTARIA acabou de autenticar -> abre automaticamente a escolha "Como deseja utilizar?"
+      setIsEscolhaModoOpen(true);
+      setIsModoPortariaOpen(false);
+    }
+  }, [isAuthLoading, isAuthenticated, authUser]);
+
   const handleSelectDeviceMode = (mode: DeviceUsageMode) => {
     try {
       localStorage.setItem('prismas_device_mode', mode);
+      if (mode === 'PORTARIA') {
+        localStorage.setItem('prismas_portaria_minimized', 'false');
+      }
     } catch {}
     setDeviceMode(mode);
     setIsEscolhaModoOpen(false);
     if (mode === 'PORTARIA') {
       setIsModoPortariaOpen(true);
-      showToast('🖥️ Modo Portaria ativado para este computador');
+      showToast('🛡️ Modo Portaria ativado');
     } else {
       setIsModoPortariaOpen(false);
-      showToast('📱 Modo Normal ativado para este computador');
+      showToast('💻 Modo Normal ativado');
     }
   };
 
   const handleChangeDeviceMode = (mode: DeviceUsageMode) => {
     try {
       localStorage.setItem('prismas_device_mode', mode);
+      if (mode === 'PORTARIA') {
+        localStorage.setItem('prismas_portaria_minimized', 'true');
+      }
     } catch {}
     setDeviceMode(mode);
     if (mode === 'PORTARIA') {
       setIsModoPortariaOpen(true);
-      showToast('🖥️ Modo Portaria ativado');
+      showToast('🛡️ Modo Portaria ativado');
     } else {
       setIsModoPortariaOpen(false);
-      showToast('📱 Modo Normal ativado');
+      showToast('💻 Modo Normal ativado');
     }
   };
 
@@ -574,6 +634,74 @@ function AppContent() {
     );
   }
 
+  // AMBIENTE EXCLUSIVO DO MODO PORTARIA (sem Dashboard ao fundo)
+  if (isModoPortariaOpen) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white relative overflow-hidden">
+        <FloatingPortariaWindow
+          condominioAtual={condominioAtual}
+          operadorIdentificado={operadorIdentificado}
+          usuarioAtual={usuarioAtual}
+          stats={stats}
+          prismas={prismas}
+          activeTab={activeTab}
+          onSelectTab={(tab) => {
+            setActiveTab(tab);
+            setSelectedFilter(undefined);
+            if (tab !== 'BUSCAR') setSearchTerm('');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={(term) => setSearchTerm(term)}
+          onCloseSearch={() => {
+            setSearchTerm('');
+            setActiveTab('ENTREGAR');
+          }}
+          onSelectPrismaEntrega={(p) => setSelectedPrismaEntrega(p)}
+          onReceberPrisma={handleReceberPrisma}
+          isReceberLoading={isReceberLoading}
+          onRegistrarPendencia={handleRegistrarPendencia}
+          onResolverPendencia={handleResolverPendencia}
+          onOpenHistoricoById={(id) => setHistoricoPrismaId(id)}
+          isOnline={isOnline}
+          isRefreshing={isRefreshing}
+          onRefresh={() => loadDashboard(true)}
+          onClose={() => setIsModoPortariaOpen(false)}
+          onAbrirEmJanelaDesktop={handleAbrirEmJanelaDesktop}
+          ultimasMovimentacoes={ultimasMovimentacoes}
+          isStandalonePopup={false}
+        />
+
+        {/* Modal de Entrega */}
+        <EntregaModal
+          prisma={selectedPrismaEntrega}
+          onClose={() => setSelectedPrismaEntrega(null)}
+          onConfirmEntrega={handleConfirmEntrega}
+          isLoading={isSubmittingEntrega}
+        />
+
+        {/* Modal de Histórico do Prisma */}
+        <PrismaHistoricoModal
+          prismaId={historicoPrismaId}
+          onClose={() => setHistoricoPrismaId(null)}
+          usuarioAtual={usuarioAtual}
+          condominioId={condominioAtualId}
+          onUpdateSuccess={() => loadDashboard(false)}
+        />
+
+        {/* Toast Notificação de Sucesso */}
+        {successToast && (
+          <div
+            id="global-success-toast-portaria"
+            className="fixed bottom-4 right-4 z-50 p-3.5 bg-slate-900 text-white rounded-xl shadow-xl border border-slate-700 text-xs sm:text-sm font-bold flex items-center gap-2 animate-in slide-in-from-bottom-5"
+          >
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{successToast}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
       {/* Top Header */}
@@ -596,7 +724,13 @@ function AppContent() {
         onRefresh={() => loadDashboard(true)}
         isRefreshing={isRefreshing}
         isModoPortariaActive={isModoPortariaOpen}
-        onToggleModoPortaria={() => setIsModoPortariaOpen((prev) => !prev)}
+        onToggleModoPortaria={() => {
+          if (isModoPortariaOpen) {
+            setIsModoPortariaOpen(false);
+          } else {
+            setIsEscolhaModoOpen(true);
+          }
+        }}
       />
 
       {/* Main Single Operational Screen Container */}
@@ -827,42 +961,6 @@ function AppContent() {
         isOpen={isEscolhaModoOpen}
         onSelectMode={handleSelectDeviceMode}
       />
-
-      {/* 10. MODO PORTARIA COMPACTO (POP-UP FLUTUANTE EXCLUSIVO PARA PC) */}
-      {isModoPortariaOpen && (
-        <FloatingPortariaWindow
-          condominioAtual={condominioAtual}
-          operadorIdentificado={operadorIdentificado}
-          usuarioAtual={usuarioAtual}
-          stats={stats}
-          prismas={prismas}
-          activeTab={activeTab}
-          onSelectTab={(tab) => {
-            setActiveTab(tab);
-            setSelectedFilter(undefined);
-            if (tab !== 'BUSCAR') setSearchTerm('');
-          }}
-          searchTerm={searchTerm}
-          onSearchChange={(term) => setSearchTerm(term)}
-          onCloseSearch={() => {
-            setSearchTerm('');
-            setActiveTab('ENTREGAR');
-          }}
-          onSelectPrismaEntrega={(p) => setSelectedPrismaEntrega(p)}
-          onReceberPrisma={handleReceberPrisma}
-          isReceberLoading={isReceberLoading}
-          onRegistrarPendencia={handleRegistrarPendencia}
-          onResolverPendencia={handleResolverPendencia}
-          onOpenHistoricoById={(id) => setHistoricoPrismaId(id)}
-          isOnline={isOnline}
-          isRefreshing={isRefreshing}
-          onRefresh={() => loadDashboard(true)}
-          onClose={() => setIsModoPortariaOpen(false)}
-          onAbrirEmJanelaDesktop={handleAbrirEmJanelaDesktop}
-          ultimasMovimentacoes={ultimasMovimentacoes}
-          isStandalonePopup={false}
-        />
-      )}
     </div>
   );
 }

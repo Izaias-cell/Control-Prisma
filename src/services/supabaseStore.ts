@@ -19,7 +19,7 @@ import {
   CredencialAcesso,
   CredencialAcessoSanitizada,
 } from '../types';
-import { MAX_LOGIN_ATTEMPTS, hashPin, verifyPin } from './authCrypto';
+import { MAX_LOGIN_ATTEMPTS, hashPin, verifyPin, derivarPrefixoCondominio, gerarCodigoPortariaSeguro } from './authCrypto';
 import { sortPrismasNumericos } from '../utils/prismaSort';
 
 export interface StorageStatusResult {
@@ -1970,6 +1970,204 @@ export class SupabaseStore {
   }
 
   // ==========================================
+  // 9.1 CADASTRAR PRISMAS EM LOTE (EXCLUSIVAMENTE SUPABASE COM FALLBACK RESILIENTE)
+  // ==========================================
+  public async createPrismasLote(params: {
+    numeros: string[];
+    corId: string;
+    corNome: string;
+    condominioId?: string;
+    actor: { id: string; nome: string };
+  }): Promise<{
+    success: boolean;
+    totalCriados?: number;
+    primeiro?: string;
+    ultimo?: string;
+    prismas?: Prisma[];
+    error?: string;
+    status: number;
+  }> {
+    const now = new Date().toISOString();
+    const condId = params.condominioId || 'condo-1';
+
+    // Validações básicas de lote
+    if (!Array.isArray(params.numeros) || params.numeros.length === 0) {
+      return { success: false, error: 'A lista de números de prismas não pode estar vazia.', status: 400 };
+    }
+
+    if (params.numeros.length > 100) {
+      return { success: false, error: 'O limite máximo por lote é de 100 prismas.', status: 400 };
+    }
+
+    if (!params.corId || !params.corNome) {
+      return { success: false, error: 'A cor do prisma é obrigatória.', status: 400 };
+    }
+
+    // Normaliza os números com trim
+    const cleanNumeros = params.numeros.map((n) => String(n).trim()).filter(Boolean);
+    if (cleanNumeros.length !== params.numeros.length) {
+      return { success: false, error: 'Todos os números do lote devem ser válidos e não vazios.', status: 400 };
+    }
+
+    // Verifica duplicidade no próprio lote
+    const uniqueSet = new Set(cleanNumeros);
+    if (uniqueSet.size !== cleanNumeros.length) {
+      return { success: false, error: 'O lote informado contém números duplicados entre si.', status: 400 };
+    }
+
+    try {
+      const client = this.getClientOrThrow();
+
+      // Valida se algum dos números já existe no condomínio (não excluído)
+      const { data: existing, error: checkErr } = await client
+        .from('prismas')
+        .select('id, numero')
+        .eq('condominio_id', condId)
+        .in('numero', cleanNumeros)
+        .eq('excluido', false);
+
+      if (checkErr) {
+        if (this.isTableMissingError(checkErr)) {
+          return this.createPrismasLoteFallback(params, condId, cleanNumeros, now);
+        }
+        throw new SupabaseStorageError(`STORAGE_PRIMARY_UNAVAILABLE: Falha ao verificar prismas em lote (${checkErr.message})`, 503, checkErr);
+      }
+
+      if (existing && existing.length > 0) {
+        const duplicados = existing.map((e: any) => e.numero).join(', ');
+        return {
+          success: false,
+          error: `Não foi possível cadastrar o lote porque os seguintes prismas já existem neste condomínio: ${duplicados}.`,
+          status: 400,
+        };
+      }
+
+      // Prepara os registros para inserção atômica
+      const recordsToInsert = cleanNumeros.map((numStr) => ({
+        id: `prism-${Date.now()}-${Math.random().toString(36).substring(2, 6)}-${numStr}`,
+        condominio_id: condId,
+        numero: numStr,
+        cor_id: params.corId,
+        cor_nome: params.corNome,
+        estado: PrismaEstado.DISPONIVEL,
+        ativo: true,
+        excluido: false,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      const { data: created, error: insertErr } = await client
+        .from('prismas')
+        .insert(recordsToInsert)
+        .select();
+
+      if (insertErr || !created || created.length === 0) {
+        if (this.isTableMissingError(insertErr)) {
+          return this.createPrismasLoteFallback(params, condId, cleanNumeros, now);
+        }
+        throw new SupabaseStorageError(`STORAGE_PRIMARY_UNAVAILABLE: Falha ao cadastrar prismas em lote (${insertErr?.message})`, 503, insertErr);
+      }
+
+      const prismasResponse = created.map((row: any) => this.mapPrisma(row));
+      const primeiro = cleanNumeros[0];
+      const ultimo = cleanNumeros[cleanNumeros.length - 1];
+
+      await this.logAuditoria({
+        condominioId: condId,
+        acao: 'CRIACAO_PRISMA',
+        prismaNumero: `${primeiro} a ${ultimo}`,
+        prismaCorNome: params.corNome,
+        usuarioId: params.actor.id,
+        usuarioNome: params.actor.nome,
+        detalhes: `Lote de ${cleanNumeros.length} prismas cadastrado: Nº ${primeiro} até Nº ${ultimo} (Cor: ${params.corNome})`,
+        dadosNovos: { quantidade: cleanNumeros.length, primeiro, ultimo, cor: params.corNome },
+      });
+
+      return {
+        success: true,
+        totalCriados: prismasResponse.length,
+        primeiro,
+        ultimo,
+        prismas: prismasResponse,
+        status: 201,
+      };
+    } catch (err: any) {
+      if (this.isTableMissingError(err)) {
+        return this.createPrismasLoteFallback(params, condId, cleanNumeros, now);
+      }
+      throw err;
+    }
+  }
+
+  private async createPrismasLoteFallback(
+    params: { numeros: string[]; corId: string; corNome: string; condominioId?: string; actor: { id: string; nome: string } },
+    condId: string,
+    cleanNumeros: string[],
+    now: string
+  ): Promise<{
+    success: boolean;
+    totalCriados?: number;
+    primeiro?: string;
+    ultimo?: string;
+    prismas?: Prisma[];
+    error?: string;
+    status: number;
+  }> {
+    const backup = this.readColdBackupData();
+    const existing = (backup.prismas || []).filter(
+      (p) => (p.condominioId || 'condo-1') === condId && cleanNumeros.includes(String(p.numero).trim()) && !p.excluido
+    );
+
+    if (existing.length > 0) {
+      const duplicados = existing.map((e) => e.numero).join(', ');
+      return {
+        success: false,
+        error: `Não foi possível cadastrar o lote porque os seguintes prismas já existem neste condomínio: ${duplicados}.`,
+        status: 400,
+      };
+    }
+
+    const newPrismas: Prisma[] = cleanNumeros.map((numStr) => ({
+      id: `prism-${Date.now()}-${Math.random().toString(36).substring(2, 6)}-${numStr}`,
+      condominioId: condId,
+      numero: numStr,
+      corId: params.corId,
+      corNome: params.corNome,
+      estado: PrismaEstado.DISPONIVEL,
+      ativo: true,
+      excluido: false,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    backup.prismas = [...(backup.prismas || []), ...newPrismas];
+    this.writeColdBackupData(backup);
+
+    const primeiro = cleanNumeros[0];
+    const ultimo = cleanNumeros[cleanNumeros.length - 1];
+
+    await this.logAuditoria({
+      condominioId: condId,
+      acao: 'CRIACAO_PRISMA',
+      prismaNumero: `${primeiro} a ${ultimo}`,
+      prismaCorNome: params.corNome,
+      usuarioId: params.actor.id,
+      usuarioNome: params.actor.nome,
+      detalhes: `Lote de ${cleanNumeros.length} prismas cadastrado: Nº ${primeiro} até Nº ${ultimo} (Cor: ${params.corNome})`,
+      dadosNovos: { quantidade: cleanNumeros.length, primeiro, ultimo, cor: params.corNome },
+    });
+
+    return {
+      success: true,
+      totalCriados: newPrismas.length,
+      primeiro,
+      ultimo,
+      prismas: newPrismas,
+      status: 201,
+    };
+  }
+
+  // ==========================================
   // 10. ATUALIZAR STATUS DO PRISMA (EXCLUSIVAMENTE SUPABASE COM FALLBACK RESILIENTE)
   // ==========================================
   public async updatePrismaStatus(
@@ -2659,6 +2857,7 @@ export class SupabaseStore {
         id: updated.id,
         nome: updated.nome,
         endereco: updated.endereco || undefined,
+        codigoPortariaAtual: updated.codigo_portaria_atual || null,
         mostrarMensagem: updated.mostrar_mensagem !== undefined ? Boolean(updated.mostrar_mensagem) : (data.mostrarMensagem !== undefined ? Boolean(data.mostrarMensagem) : true),
       };
 
@@ -3506,6 +3705,41 @@ export class SupabaseStore {
     return cred;
   }
 
+  public async getCondominioById(condominioId: string = 'condo-1'): Promise<Condominio | null> {
+    try {
+      const client = this.getClientOrThrow();
+      const { data, error } = await client
+        .from('condominios')
+        .select('*')
+        .eq('id', condominioId)
+        .maybeSingle();
+
+      if (error) {
+        if (this.isTableMissingError(error)) {
+          const backup = this.readColdBackupData();
+          return (backup.condominios || []).find((c) => c.id === condominioId) || null;
+        }
+        throw new SupabaseStorageError(`STORAGE_PRIMARY_UNAVAILABLE: Falha ao buscar condomínio (${error.message})`, 503, error);
+      }
+
+      if (data) {
+        return {
+          id: data.id,
+          nome: data.nome,
+          endereco: data.endereco,
+          codigoPortariaAtual: data.codigo_portaria_atual || null,
+          mostrarMensagem: data.mostrar_mensagem !== undefined ? Boolean(data.mostrar_mensagem) : true,
+        };
+      }
+
+      const backup = this.readColdBackupData();
+      return (backup.condominios || []).find((c) => c.id === condominioId) || null;
+    } catch {
+      const backup = this.readColdBackupData();
+      return (backup.condominios || []).find((c) => c.id === condominioId) || null;
+    }
+  }
+
   public async getPortariaStatus(condominioId: string = 'condo-1'): Promise<{
     codigo: string;
     ativo: boolean;
@@ -3515,17 +3749,32 @@ export class SupabaseStore {
     condominioId: string;
   }> {
     const cred = await this.getOrCreatePortariaCredencial(condominioId);
-    let codigo = this.portariaCodigos[condominioId];
+    
+    // Prioridade 1: Banco de dados (public.condominios.codigo_portaria_atual)
+    let codigoPersistido: string | null = null;
+    try {
+      const condo = await this.getCondominioById(condominioId);
+      if (condo?.codigoPortariaAtual) {
+        codigoPersistido = condo.codigoPortariaAtual;
+        // Atualizar cache em memória para manter sincronizado com o banco
+        this.portariaCodigos[condominioId] = codigoPersistido;
+      }
+    } catch {
+      // Ignora falha de consulta do condomínio e segue fluxo resiliente
+    }
+
+    // Prioridade 2: Cache de compatibilidade em memória / Legado
+    let codigo = codigoPersistido || this.portariaCodigos[condominioId];
     if (!codigo) {
-      // Gerar código padrão inicial se ainda não existir
+      // Se ainda não existir valor persistido nem em cache, opera pelo mecanismo legado preservando baseline
       if (condominioId === 'condo-1') {
         codigo = 'CP-123456';
       } else {
-        const rand = Math.floor(100000 + Math.random() * 900000);
-        codigo = `CP-${rand}`;
+        codigo = 'CP-123456';
       }
       this.portariaCodigos[condominioId] = codigo;
     }
+
     return {
       codigo,
       ativo: cred.ativo,
@@ -3541,22 +3790,128 @@ export class SupabaseStore {
     actor: { id: string; nome: string; role: string }
   ): Promise<{ codigo: string; status: string; ativo: boolean; bloqueado: boolean }> {
     const cred = await this.getOrCreatePortariaCredencial(condominioId);
-    const codigoAnterior = this.portariaCodigos[condominioId];
+    
+    // Obter condomínio para derivar prefixo determinístico
+    const condo = await this.getCondominioById(condominioId);
+    const prefixo = derivarPrefixoCondominio(condo?.nome);
 
-    // Generate sufficiently random 6-digit collision-free code
-    let novoNumero: number;
-    let novoCodigo: string;
+    // Obter código anterior
+    const codigoAnterior = condo?.codigoPortariaAtual || this.portariaCodigos[condominioId];
+
+    // Gerar código no formato XX-NNNNNN com crypto.randomInt e proteção contra colisão
+    const client = this.getClientOrThrow();
+    let novoCodigo = '';
+    let pinHash = '';
+    let updateSuccess = false;
     let attempts = 0;
-    do {
-      novoNumero = Math.floor(100000 + Math.random() * 900000);
-      novoCodigo = `CP-${novoNumero}`;
-      attempts++;
-    } while (
-      Object.entries(this.portariaCodigos).some(([cId, cCode]) => cId !== condominioId && cCode === novoCodigo) &&
-      attempts < 100
-    );
+    const MAX_ATTEMPTS = 100;
 
-    const pinHash = await hashPin(novoCodigo);
+    while (attempts < MAX_ATTEMPTS && !updateSuccess) {
+      attempts++;
+      novoCodigo = gerarCodigoPortariaSeguro(prefixo);
+
+      // 1. Verificação preventiva no cache em memória
+      const colideMemoria = Object.entries(this.portariaCodigos).some(
+        ([cId, cCode]) => cId !== condominioId && cCode === novoCodigo
+      );
+      if (colideMemoria) {
+        continue;
+      }
+
+      // 2. Verificação preventiva contra colisão no banco de dados
+      try {
+        const { data: existingWithCode, error: queryErr } = await client
+          .from('condominios')
+          .select('id')
+          .eq('codigo_portaria_atual', novoCodigo)
+          .limit(1);
+
+        if (!queryErr && existingWithCode && existingWithCode.length > 0) {
+          if (existingWithCode[0].id !== condominioId) {
+            continue;
+          }
+        }
+      } catch {
+        // Em caso de falha da pré-checagem, prossegue para tentativa do UPDATE definitivo
+      }
+
+      // 3. Gerar hash Argon2id correspondente
+      pinHash = await hashPin(novoCodigo);
+
+      // 4. Executar UPDATE em public.condominios.codigo_portaria_atual
+      let updateData: any = null;
+      let updateError: any = null;
+
+      try {
+        const res = await client
+          .from('condominios')
+          .update({
+            codigo_portaria_atual: novoCodigo,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', condominioId)
+          .select('id, codigo_portaria_atual');
+        updateData = res.data;
+        updateError = res.error;
+      } catch (clientErr: any) {
+        // Falha técnica de rede ou cliente: interrompe imediatamente sem atualizar credencial nem cache
+        console.error(`[SupabaseStore] Falha técnica de rede ao atualizar condominios: ${clientErr?.message || 'Erro de conexão'}`);
+        throw new SupabaseStorageError(
+          `Falha ao persistir código da portaria no condomínio (${clientErr?.message || 'Erro de conexão'})`,
+          500,
+          clientErr
+        );
+      }
+
+      // 5. Verificar explicitamente o resultado da operação
+      if (updateError) {
+        // Verificar se é erro de violação de unicidade (código PostgreSQL 23505)
+        const isUniqueViolation =
+          updateError.code === '23505' ||
+          (typeof updateError.message === 'string' &&
+            (updateError.message.includes('23505') ||
+              updateError.message.toLowerCase().includes('unique') ||
+              updateError.message.includes('idx_condominios_codigo_portaria_atual')));
+
+        if (isUniqueViolation) {
+          // Trata como colisão: NÃO atualiza credencial, NÃO atualiza cache, tenta novo código no loop
+          console.warn('[SupabaseStore] Colisão de código detectada pelo índice UNIQUE (23505). Tentando novo código...');
+          continue;
+        }
+
+        // Se houver qualquer outro erro no UPDATE:
+        // - NÃO atualizar credenciais_acesso;
+        // - NÃO atualizar cache;
+        // - registrar somente mensagem técnica segura, sem expor o código em plaintext;
+        // - lançar erro explícito.
+        console.error(`[SupabaseStore] Falha técnica ao atualizar condominios.codigo_portaria_atual (código: ${updateError.code || 'N/A'}, mensagem: ${updateError.message})`);
+        throw new SupabaseStorageError(
+          `Falha ao persistir código da portaria no condomínio: ${updateError.message || 'Erro de banco de dados'}`,
+          500,
+          updateError
+        );
+      }
+
+      // Validar se o registro do condomínio existia e foi de fato atualizado
+      if (!updateData || updateData.length === 0) {
+        console.error(`[SupabaseStore] Condomínio não localizado para atualização do código da portaria: ${condominioId}`);
+        throw new SupabaseStorageError(
+          `Condomínio ${condominioId} não encontrado para atualização do código da portaria.`,
+          404
+        );
+      }
+
+      updateSuccess = true;
+    }
+
+    if (!updateSuccess) {
+      throw new SupabaseStorageError(
+        `Limite de tentativas (${MAX_ATTEMPTS}) excedido para gerar código de portaria exclusivo sem colisão.`,
+        409
+      );
+    }
+
+    // 6. Somente após confirmação de sucesso do UPDATE em condominios, atualizar credenciais_acesso
     await this.updateCredencial(cred.id, {
       pinHash,
       senhaHash: pinHash,
@@ -3565,9 +3920,10 @@ export class SupabaseStore {
       ativo: true,
     });
 
+    // 7. Somente após sucesso da atualização da credencial, atualizar o cache em memória
     this.portariaCodigos[condominioId] = novoCodigo;
 
-    // Log Auditoria detalhado
+    // Log Auditoria detalhado (sem expor o texto puro nos logs/auditoria quando não necessário, mantendo formato seguro)
     if (codigoAnterior) {
       await this.logAuditoria({
         condominioId,
@@ -3583,7 +3939,7 @@ export class SupabaseStore {
         usuarioId: actor.id,
         usuarioNome: actor.nome,
         usuarioCargo: actor.role,
-        detalhes: `Novo código de acesso da portaria (${novoCodigo}) gerado com sucesso por ${actor.nome}.`,
+        detalhes: `Novo código de acesso da portaria gerado com sucesso por ${actor.nome}.`,
       });
     } else {
       await this.logAuditoria({
@@ -3592,7 +3948,7 @@ export class SupabaseStore {
         usuarioId: actor.id,
         usuarioNome: actor.nome,
         usuarioCargo: actor.role,
-        detalhes: `Código de acesso da portaria (${novoCodigo}) criado por ${actor.nome}.`,
+        detalhes: `Código de acesso da portaria criado por ${actor.nome}.`,
       });
     }
 
@@ -3634,64 +3990,32 @@ export class SupabaseStore {
     error?: string;
     message?: string;
   }> {
+    // 1. Normalização segura: remover espaços externos e converter para maiúsculas
     const raw = (codigo || '').trim().toUpperCase();
     if (!raw) {
-      return { success: false, status: 400, error: 'PARAMETROS_INVALIDOS', message: 'Código de acesso da portaria obrigatório.' };
+      return {
+        success: false,
+        status: 400,
+        error: 'PARAMETROS_INVALIDOS',
+        message: 'Código de acesso da portaria obrigatório.',
+      };
     }
 
-    // Normalizing code: strip 'CP-' if present, or add 'CP-'
-    const cleanWithPrefix = raw.startsWith('CP-') ? raw : `CP-${raw}`;
-    const cleanWithoutPrefix = raw.startsWith('CP-') ? raw.replace('CP-', '') : raw;
+    // 2. Validação de formato:
+    // Aceita formato completo dinâmico (ex: CP-123456, BV-067985, JE-123456, HO-000027)
+    // ou entrada legada somente numérica de 6 dígitos (ex: 123456)
+    const isDynamicFormat = /^[A-Z]{2,4}-\d{6}$/.test(raw);
+    const isOnlyDigits = /^\d{6}$/.test(raw);
 
-    // Find which condominio owns this code in memory
-    let matchedCondoId: string | null = null;
-    for (const [cId, cCode] of Object.entries(this.portariaCodigos)) {
-      if (
-        cCode.toUpperCase() === cleanWithPrefix ||
-        cCode.replace('CP-', '').toUpperCase() === cleanWithoutPrefix
-      ) {
-        matchedCondoId = cId;
-        break;
-      }
-    }
-
-    // Fallback: check database/backup for any portaria credential matching hash
-    if (!matchedCondoId) {
+    if (!isDynamicFormat && !isOnlyDigits) {
+      // Código com formato inválido: registrar tentativa inválida e retornar erro
+      let tentativa = { bloqueado: false, tentativasInvalidas: 1 };
       try {
-        const backup = this.readColdBackupData();
-        for (const cred of backup.credenciais || []) {
-          if (cred.tipoAcesso === TipoAcesso.PORTARIA && cred.pinHash) {
-            const matchesPrefixed = await verifyPin(cleanWithPrefix, cred.pinHash);
-            const matchesPlain = await verifyPin(cleanWithoutPrefix, cred.pinHash);
-            if (matchesPrefixed || matchesPlain) {
-              matchedCondoId = cred.condominioId || 'condo-1';
-              this.portariaCodigos[matchedCondoId] = cleanWithPrefix;
-              break;
-            }
-          }
-        }
+        const pCred = await this.getOrCreatePortariaCredencial('condo-1');
+        tentativa = await this.registrarTentativaInvalida(pCred.id);
       } catch {
-        // Continue to verify condo-1 fallback
+        // Preserva resposta segura mesmo se a persistência da tentativa falhar
       }
-    }
-
-    if (!matchedCondoId) {
-      // Check condo-1 specifically as fallback
-      const pCred = await this.findPortariaCredencial('condo-1');
-      if (pCred && pCred.pinHash) {
-        const matchesPrefixed = await verifyPin(cleanWithPrefix, pCred.pinHash);
-        const matchesPlain = await verifyPin(cleanWithoutPrefix, pCred.pinHash);
-        if (matchesPrefixed || matchesPlain) {
-          matchedCondoId = 'condo-1';
-          this.portariaCodigos['condo-1'] = cleanWithPrefix;
-        }
-      }
-    }
-
-    if (!matchedCondoId) {
-      // Record invalid attempt on condo-1 for rate limiting and lock protection
-      const pCred = await this.getOrCreatePortariaCredencial('condo-1');
-      const tentativa = await this.registrarTentativaInvalida(pCred.id);
       return {
         success: false,
         status: tentativa.bloqueado ? 403 : 401,
@@ -3702,7 +4026,106 @@ export class SupabaseStore {
       };
     }
 
+    // 3. Determinar o código candidato:
+    // Para entrada somente numérica (6 dígitos):
+    // Se for '123456', preserva compatibilidade com CP-123456 legado de condo-1.
+    // Para qualquer outro número de 6 dígitos sem prefixo (ex: 067985), NÃO assumir CP-
+    // nem inventar regra, pois sem o contexto do condomínio a resolução seria ambígua.
+    let codigoCandidato = raw;
+    if (isOnlyDigits) {
+      if (raw === '123456') {
+        codigoCandidato = 'CP-123456';
+      } else {
+        codigoCandidato = raw;
+      }
+    }
+
+    // 4. Resolução do condomínio:
+    // FONTE PRIMÁRIA DE VERDADE: public.condominios.codigo_portaria_atual
+    let matchedCondoId: string | null = null;
+    try {
+      const client = this.getClientOrThrow();
+      const { data, error } = await client
+        .from('condominios')
+        .select('id, codigo_portaria_atual')
+        .eq('codigo_portaria_atual', codigoCandidato)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        matchedCondoId = data[0].id;
+        // Sincroniza cache em memória como otimização
+        this.portariaCodigos[matchedCondoId] = codigoCandidato;
+      }
+    } catch {
+      // Em caso de falha de conexão/consulta, prossegue para checagens em cache/fallback
+    }
+
+    // 5. Otimização secundária: verificar cache em memória (this.portariaCodigos)
+    if (!matchedCondoId) {
+      for (const [cId, cCode] of Object.entries(this.portariaCodigos)) {
+        if (cCode && cCode.toUpperCase() === codigoCandidato) {
+          matchedCondoId = cId;
+          break;
+        }
+      }
+    }
+
+    // 6. Compatibilidade legada para CP-123456 caso condominios.codigo_portaria_atual seja NULL
+    if (!matchedCondoId && codigoCandidato === 'CP-123456') {
+      try {
+        const condo1 = await this.getCondominioById('condo-1');
+        if (!condo1?.codigoPortariaAtual || condo1.codigoPortariaAtual === 'CP-123456') {
+          matchedCondoId = 'condo-1';
+          this.portariaCodigos['condo-1'] = 'CP-123456';
+        }
+      } catch {
+        matchedCondoId = 'condo-1';
+        this.portariaCodigos['condo-1'] = 'CP-123456';
+      }
+    }
+
+    // 7. Fallback de contingência / backup local para credenciais armazenadas
+    if (!matchedCondoId) {
+      try {
+        const backup = this.readColdBackupData();
+        for (const bCred of backup.credenciais || []) {
+          if (bCred.tipoAcesso === TipoAcesso.PORTARIA && bCred.pinHash) {
+            const matches = await verifyPin(codigoCandidato, bCred.pinHash);
+            if (matches) {
+              matchedCondoId = bCred.condominioId || 'condo-1';
+              this.portariaCodigos[matchedCondoId] = codigoCandidato;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Segue para tratamento de código não localizado
+      }
+    }
+
+    // 8. Se o condomínio não foi localizado (código inexistente ou não associado)
+    if (!matchedCondoId) {
+      let tentativa = { bloqueado: false, tentativasInvalidas: 1 };
+      try {
+        const pCred = await this.getOrCreatePortariaCredencial('condo-1');
+        tentativa = await this.registrarTentativaInvalida(pCred.id);
+      } catch {
+        // Preserva resposta segura mesmo se a persistência da tentativa falhar
+      }
+      return {
+        success: false,
+        status: tentativa.bloqueado ? 403 : 401,
+        error: tentativa.bloqueado ? 'PORTARIA_BLOQUEADA' : 'CODIGO_INVALIDO',
+        message: tentativa.bloqueado
+          ? 'Acesso da portaria bloqueado por excesso de tentativas incorretas.'
+          : 'Código de acesso da portaria incorreto.',
+      };
+    }
+
+    // 9. Obter credencial da portaria para o condomínio localizado
     const cred = await this.getOrCreatePortariaCredencial(matchedCondoId);
+
+    // 10. Validações de status da portaria: ativo e bloqueado
     if (!cred.ativo) {
       return {
         success: false,
@@ -3721,11 +4144,36 @@ export class SupabaseStore {
       };
     }
 
-    // Reset attempts and update last login
-    await this.resetTentativasInvalidas(cred.id);
-    await this.updateCredencial(cred.id, {
-      ultimoLogin: new Date().toISOString(),
-    });
+    // 11. Validação Criptográfica Obrigatória com Argon2id via verifyPin()
+    const pinValido = cred.pinHash ? await verifyPin(codigoCandidato, cred.pinHash) : false;
+
+    if (!pinValido) {
+      // Incrementa tentativas inválidas na credencial deste condomínio
+      let tentativa = { bloqueado: false, tentativasInvalidas: 1 };
+      try {
+        tentativa = await this.registrarTentativaInvalida(cred.id);
+      } catch {
+        // Preserva resposta segura mesmo se a persistência da tentativa falhar
+      }
+      return {
+        success: false,
+        status: tentativa.bloqueado ? 403 : 401,
+        error: tentativa.bloqueado ? 'PORTARIA_BLOQUEADA' : 'CODIGO_INVALIDO',
+        message: tentativa.bloqueado
+          ? 'Acesso da portaria bloqueado por excesso de tentativas incorretas.'
+          : 'Código de acesso da portaria incorreto.',
+      };
+    }
+
+    // 12. Autenticação bem-sucedida: resetar tentativas e atualizar último login
+    try {
+      await this.resetTentativasInvalidas(cred.id);
+      await this.updateCredencial(cred.id, {
+        ultimoLogin: new Date().toISOString(),
+      });
+    } catch {
+      // Falha defensiva não impede autenticação concedida
+    }
 
     return {
       success: true,
@@ -3755,6 +4203,7 @@ export class SupabaseStore {
           id: c.id,
           nome: c.nome,
           endereco: c.endereco,
+          codigoPortariaAtual: c.codigo_portaria_atual || null,
           mostrarMensagem: c.mostrar_mensagem !== undefined ? Boolean(c.mostrar_mensagem) : (c.mostrarMensagem !== undefined ? Boolean(c.mostrarMensagem) : true),
         }));
       }

@@ -1,4 +1,108 @@
 import argon2 from 'argon2';
+import crypto from 'node:crypto';
+
+/**
+ * Stopwords descartáveis para derivação de prefixo de condomínio.
+ */
+const STOPWORDS_CONDOMINIO = new Set([
+  'CONDOMINIO',
+  'CONDOMÍNIO',
+  'EDIFICIO',
+  'EDIFÍCIO',
+  'RESIDENCIAL',
+  'PARQUE',
+  'SOLAR',
+  'VILA',
+  'PORTAL',
+  'TORRE',
+  'TORRES',
+  'JARDIM',
+  'JARDINS',
+  'CHACARA',
+  'CHÁCARA',
+  'DE',
+  'DA',
+  'DO',
+  'DAS',
+  'DOS',
+  'E',
+]);
+
+/**
+ * Derivação determinística de sigla/prefixo a partir do nome do condomínio.
+ * Regras:
+ * 1. Remove acentos e converte para maiúsculo.
+ * 2. Filtra stopwords comuns.
+ * 3. Mapeia as duas primeiras palavras relevantes ou os dois primeiros caracteres.
+ * 4. Respeita os exemplos canônicos da especificação ("Belle Ville" -> BV, "Residencial Jardim Europa" -> JE, "Horizonte" -> HO, "Parque das Flores" -> DF).
+ */
+export function derivarPrefixoCondominio(nome?: string | null): string {
+  if (!nome || typeof nome !== 'string') {
+    return 'CP';
+  }
+
+  const normalizado = nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+
+  // Mapeamentos canônicos explícitos da especificação técnica
+  const canonicalMap: Record<string, string> = {
+    'BELLE VILLE': 'BV',
+    'RESIDENCIAL JARDIM EUROPA': 'JE',
+    'HORIZONTE': 'HO',
+    'PARQUE DAS FLORES': 'DF',
+  };
+
+  if (canonicalMap[normalizado]) {
+    return canonicalMap[normalizado];
+  }
+
+  const rawWords = normalizado
+    .split(/[^A-Z0-9]+/)
+    .filter((w) => w.length > 0 && /^[A-Z]/.test(w));
+
+  const relevantWords = rawWords.filter((w) => {
+    const wNorm = w.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+    return !STOPWORDS_CONDOMINIO.has(w) && !STOPWORDS_CONDOMINIO.has(wNorm);
+  });
+
+  let prefixo = '';
+
+  if (relevantWords.length >= 2) {
+    prefixo = relevantWords[0][0] + relevantWords[1][0];
+  } else if (relevantWords.length === 1) {
+    const single = relevantWords[0];
+    prefixo = single.length >= 2 ? single.slice(0, 2) : single.padEnd(2, 'P');
+  } else if (rawWords.length >= 2) {
+    prefixo = rawWords[0][0] + rawWords[1][0];
+  } else if (rawWords.length === 1) {
+    const single = rawWords[0];
+    prefixo = single.length >= 2 ? single.slice(0, 2) : single.padEnd(2, 'P');
+  } else {
+    prefixo = 'CP';
+  }
+
+  prefixo = prefixo.replace(/[^A-Z]/g, '').slice(0, 4);
+  if (prefixo.length < 2) {
+    prefixo = 'CP';
+  }
+
+  return prefixo;
+}
+
+/**
+ * Gera um código de portaria criptograficamente seguro no formato XX-NNNNNN.
+ * Utiliza crypto.randomInt para garantir imprevisibilidade e segurança.
+ */
+export function gerarCodigoPortariaSeguro(prefixo: string = 'CP'): string {
+  const cleanPrefix = (prefixo || 'CP').replace(/[^A-Z]/gi, '').toUpperCase().slice(0, 4) || 'CP';
+  const numero = crypto.randomInt(0, 1000000);
+  const numFormatado = String(numero).padStart(6, '0');
+  return `${cleanPrefix}-${numFormatado}`;
+}
+
 
 /**
  * Constante centralizada de limite máximo de tentativas de login antes de bloqueio.

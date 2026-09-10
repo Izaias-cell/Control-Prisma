@@ -24,10 +24,16 @@ export const PrismaVisual: React.FC<PrismaVisualProps> = ({
     normalized === 'white' ||
     normalized === 'yellow';
 
+  const isBlue = normalized === 'azul' || normalized === 'blue';
+
   const textColor = isLightColor ? 'text-slate-950 font-black' : 'text-white font-black';
   const textShadow = isLightColor
     ? 'drop-shadow-[0_1px_1px_rgba(255,255,255,0.8)]'
+    : isBlue
+    ? ''
     : 'drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]';
+
+  const trackingClass = size === 'sm' ? 'tracking-tight' : isBlue ? 'tracking-normal' : 'tracking-tight';
 
   // Size dimensions
   const sizeClasses = {
@@ -62,7 +68,7 @@ export const PrismaVisual: React.FC<PrismaVisualProps> = ({
       {/* Main Face: High-Contrast Prisma Number printed on physical body */}
       <div className="flex-1 flex items-center justify-center w-full px-1">
         <span
-          className={`leading-none tracking-tight ${sizeClasses.number} ${textColor} ${textShadow}`}
+          className={`leading-none ${trackingClass} ${sizeClasses.number} ${textColor} ${textShadow}`}
         >
           {numero}
         </span>

@@ -991,6 +991,88 @@ export function createExpressApp(): express.Application {
   );
 
   // ==========================================
+  // 10.1 CADASTRO DE PRISMAS EM LOTE (SUPABASE)
+  // ==========================================
+  app.post(
+    '/api/prismas/lote',
+    requireAuth,
+    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
+    async (req, res) => {
+      const { numeros, numeroInicial, quantidade, padZero, corId, corNome } = req.body;
+
+      if (!corId || !corNome) {
+        return res.status(400).json({ error: 'Cor é obrigatória.' });
+      }
+
+      let listaNumeros: string[] = [];
+
+      if (Array.isArray(numeros) && numeros.length > 0) {
+        listaNumeros = numeros.map((n: any) => String(n).trim()).filter(Boolean);
+      } else if (numeroInicial !== undefined && quantidade !== undefined) {
+        const numInicio = parseInt(String(numeroInicial), 10);
+        const qtd = parseInt(String(quantidade), 10);
+
+        if (isNaN(numInicio) || numInicio < 1) {
+          return res.status(400).json({ error: 'O número inicial deve ser um valor inteiro maior ou igual a 1.' });
+        }
+
+        if (isNaN(qtd) || qtd < 1) {
+          return res.status(400).json({ error: 'A quantidade deve ser um número inteiro maior ou igual a 1.' });
+        }
+
+        if (qtd > 100) {
+          return res.status(400).json({ error: 'A quantidade máxima por lote é de 100 prismas.' });
+        }
+
+        const devePad = padZero !== false;
+        for (let i = numInicio; i < numInicio + qtd; i++) {
+          listaNumeros.push(devePad && i < 10 ? `0${i}` : `${i}`);
+        }
+      } else {
+        return res.status(400).json({ error: 'Informe a lista de números ou o número inicial e a quantidade.' });
+      }
+
+      if (listaNumeros.length === 0) {
+        return res.status(400).json({ error: 'Nenhum prisma válido a cadastrar.' });
+      }
+
+      if (listaNumeros.length > 100) {
+        return res.status(400).json({ error: 'O limite máximo por lote é de 100 prismas.' });
+      }
+
+      const condominioId = req.user!.condominioId;
+      const actor = {
+        id: req.user!.usuarioId,
+        nome: req.user!.nome,
+      };
+
+      try {
+        const result = await supabaseStore.createPrismasLote({
+          numeros: listaNumeros,
+          corId,
+          corNome,
+          condominioId,
+          actor,
+        });
+
+        return res.status(result.status).json(
+          result.success
+            ? {
+                success: true,
+                totalCriados: result.totalCriados,
+                primeiro: result.primeiro,
+                ultimo: result.ultimo,
+                prismas: result.prismas,
+              }
+            : { error: result.error }
+        );
+      } catch (err: any) {
+        return handleStorageError(res, err, 'Erro ao cadastrar lote de prismas no Supabase.');
+      }
+    }
+  );
+
+  // ==========================================
   // 11. LISTAR TODOS OS PRISMAS (SUPABASE)
   // ==========================================
   app.get('/api/prismas/todos', async (req, res) => {

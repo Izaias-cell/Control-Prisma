@@ -32,13 +32,16 @@ export const EscolhaModoDispositivoModal: React.FC<EscolhaModoDispositivoModalPr
         {/* Header */}
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xl shadow-lg shadow-blue-500/30 mx-auto border border-blue-400/40">
-            🔷
+            🛡️
           </div>
-          <h2 className="text-lg sm:text-xl font-black text-white tracking-wide">
-            PRISMAS • Modo de Uso
+          <h2 className="text-lg sm:text-xl font-black text-white tracking-wide uppercase">
+            CONTROL PRISMA
           </h2>
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Como este computador será utilizado no dia a dia?
+          <p className="text-sm font-semibold text-slate-200">
+            Como deseja utilizar?
+          </p>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Selecione o perfil de operação deste computador:
           </p>
         </div>
 
@@ -61,12 +64,12 @@ export const EscolhaModoDispositivoModal: React.FC<EscolhaModoDispositivoModalPr
                   : 'bg-slate-700 text-slate-300'
               }`}
             >
-              <Monitor className="w-5 h-5" />
+              <ShieldCheck className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-black text-white flex items-center gap-1.5">
-                  🖥️ Modo Portaria (PRISMAS)
+                  🛡️ MODO PORTARIA
                 </span>
                 {selected === 'PORTARIA' && (
                   <span className="w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center">
@@ -75,10 +78,10 @@ export const EscolhaModoDispositivoModal: React.FC<EscolhaModoDispositivoModalPr
                 )}
               </div>
               <p className="text-[11px] text-blue-200 mt-1 leading-snug font-medium">
-                ★ <strong>Recomendado para o computador da portaria</strong>
+                ★ <strong>Recomendado para o posto de portaria</strong>
               </p>
               <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                Janela compacta (400×680px) arrastável que divide o monitor com o WhatsApp e o sistema de controle de acesso.
+                Inicia em popup flutuante compacto com status dos prismas, expansível para a portaria completa.
               </p>
             </div>
           </div>
@@ -100,12 +103,12 @@ export const EscolhaModoDispositivoModal: React.FC<EscolhaModoDispositivoModalPr
                   : 'bg-slate-700 text-slate-300'
               }`}
             >
-              <Smartphone className="w-5 h-5" />
+              <Monitor className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-black text-white">
-                  📱 Modo Normal (Completo)
+                <span className="text-sm font-black text-white flex items-center gap-1.5">
+                  💻 MODO NORMAL
                 </span>
                 {selected === 'NORMAL' && (
                   <span className="w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center">
@@ -114,7 +117,7 @@ export const EscolhaModoDispositivoModal: React.FC<EscolhaModoDispositivoModalPr
                 )}
               </div>
               <p className="text-[11px] text-slate-400 mt-1 leading-snug">
-                Interface completa e expandida em tela cheia para administração ou uso padrão.
+                Dashboard completo em tela cheia para administração, síndico e uso padrão do sistema.
               </p>
             </div>
           </div>

@@ -46,23 +46,21 @@ export function formatarNumeroCasa(casa: string): string {
 
 /**
  * Formata a mensagem padrão de RETIRADA / ENTREGA de prisma para cópia automática
- * Formato obrigatório: CASA 426 RETIROU PRISMA 11 (AMARELO).
+ * Formato: Casa 426 retirou prisma 28.
  */
 export function formatMensagemEntrega(numero: string, corNome: string, casa: string): string {
   const num = String(numero || '').trim();
-  const cor = (corNome || '').trim().toUpperCase();
   const casaLimpa = formatarNumeroCasa(casa);
-  return `CASA ${casaLimpa} RETIROU PRISMA ${num} (${cor}).`;
+  return `Casa ${casaLimpa} retirou prisma ${num}.`;
 }
 
 /**
  * Formata a mensagem padrão de DEVOLUÇÃO / RECOLHIMENTO de prisma para cópia automática
- * Formato obrigatório: CASA 426 ENTREGOU PRISMA 11 (AMARELO).
+ * Formato: Casa 426 entregou prisma 28.
  */
 export function formatMensagemRecolhimento(numero: string, corNome: string, casa: string): string {
   const num = String(numero || '').trim();
-  const cor = (corNome || '').trim().toUpperCase();
   const casaLimpa = formatarNumeroCasa(casa);
-  return `CASA ${casaLimpa} ENTREGOU PRISMA ${num} (${cor}).`;
+  return `Casa ${casaLimpa} entregou prisma ${num}.`;
 }
 

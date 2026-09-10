@@ -147,6 +147,7 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
     initialX: number;
     initialY: number;
   } | null>(null);
+  const wasDraggingRef = useRef<boolean>(false);
 
   // Sync minimize state
   const handleToggleMinimize = (min: boolean) => {
@@ -158,7 +159,7 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
     }
   };
 
-  // Dragging handlers
+  // Dragging handlers for expanded window
   const handlePointerDown = (e: React.PointerEvent<HTMLElement>) => {
     if (isStandalonePopup) return;
     // Don't drag if clicking buttons or interactive elements
@@ -224,6 +225,97 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
     window.addEventListener('pointerup', onPointerUp);
   };
 
+  // Dragging handlers for small / minimized window (distinguishes drag >= 5px from click)
+  const handlePointerDownSmall = (e: React.PointerEvent<HTMLElement>) => {
+    if (isStandalonePopup) return;
+    if (e.button !== 0) return; // Only primary button
+
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: position.x,
+      initialY: position.y,
+    };
+    wasDraggingRef.current = false;
+
+    let hasMovedBeyondThreshold = false;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (!dragRef.current) return;
+      const deltaX = moveEvent.clientX - dragRef.current.startX;
+      const deltaY = moveEvent.clientY - dragRef.current.startY;
+      const distance = Math.hypot(deltaX, deltaY);
+
+      if (!hasMovedBeyondThreshold && distance >= 5) {
+        hasMovedBeyondThreshold = true;
+        wasDraggingRef.current = true;
+        setIsDragging(true);
+      }
+
+      if (hasMovedBeyondThreshold) {
+        const newX = Math.max(
+          10,
+          Math.min(window.innerWidth - 340, dragRef.current.initialX + deltaX)
+        );
+        const newY = Math.max(
+          10,
+          Math.min(window.innerHeight - 80, dragRef.current.initialY + deltaY)
+        );
+
+        setPosition({ x: newX, y: newY });
+      }
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+
+      if (dragRef.current) {
+        const deltaX = upEvent.clientX - dragRef.current.startX;
+        const deltaY = upEvent.clientY - dragRef.current.startY;
+        const distance = Math.hypot(deltaX, deltaY);
+
+        if (distance >= 5) {
+          wasDraggingRef.current = true;
+          const finalX = Math.max(
+            10,
+            Math.min(window.innerWidth - 340, dragRef.current.initialX + deltaX)
+          );
+          const finalY = Math.max(
+            10,
+            Math.min(window.innerHeight - 80, dragRef.current.initialY + deltaY)
+          );
+
+          setPosition({ x: finalX, y: finalY });
+          try {
+            localStorage.setItem(
+              STORAGE_POS_KEY,
+              JSON.stringify({ x: finalX, y: finalY })
+            );
+          } catch {
+            // Ignore localStorage errors
+          }
+        }
+      }
+
+      setIsDragging(false);
+      dragRef.current = null;
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  const handleClickSmall = (e: React.MouseEvent) => {
+    if (wasDraggingRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      wasDraggingRef.current = false;
+      return;
+    }
+    handleToggleMinimize(false);
+  };
+
   // Make sure position stays within viewport on window resize
   useEffect(() => {
     const handleResize = () => {
@@ -248,32 +340,73 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   const prismasEmUso = prismas.filter((p) => p.estado === PrismaEstado.EM_USO);
 
   // ----------------------------------------------------
-  // MINIMIZED STATE: Sleek Floating Button "🔷 PRISMAS"
+  // MINIMIZED STATE: Floating Persistent Operational Popup
   // ----------------------------------------------------
   if (isMinimized && !isStandalonePopup) {
+    const qtdDisponiveis = stats.disponiveis ?? 0;
+    const isEsgotado = qtdDisponiveis === 0;
+    const isAlertaApenasUm = qtdDisponiveis === 1;
+    const formattedQtd = qtdDisponiveis < 10 ? `0${qtdDisponiveis}` : `${qtdDisponiveis}`;
+
+    let popupBg = 'bg-slate-900 border-blue-500/80 hover:border-blue-400 hover:bg-slate-800 ring-blue-500/20';
+    let iconBg = 'bg-gradient-to-br from-blue-500 to-blue-700 shadow-blue-500/50';
+    let statusText = `🔷 Prismas disponíveis: ${formattedQtd}`;
+    let statusColor = 'text-blue-300';
+    let pulseEffect = '';
+
+    if (isEsgotado) {
+      popupBg = 'bg-rose-950 border-rose-500/90 hover:border-rose-400 hover:bg-rose-900 ring-rose-500/30';
+      iconBg = 'bg-gradient-to-br from-rose-500 to-rose-700 shadow-rose-500/50 animate-bounce';
+      statusText = '🚨 Prismas esgotados, por favor informe!';
+      statusColor = 'text-rose-200 font-bold';
+      pulseEffect = 'animate-pulse';
+    } else if (isAlertaApenasUm) {
+      popupBg = 'bg-amber-950 border-amber-500/90 hover:border-amber-400 hover:bg-amber-900 ring-amber-500/30';
+      iconBg = 'bg-gradient-to-br from-amber-500 to-amber-700 shadow-amber-500/50';
+      statusText = '⚠️ Vamos ficar sem prisma, temos apenas 1 disponível';
+      statusColor = 'text-amber-200 font-semibold';
+      pulseEffect = '';
+    }
+
     return (
-      <button
-        id="btn-restaurar-modo-portaria"
-        onClick={() => handleToggleMinimize(false)}
-        className="fixed z-50 flex items-center gap-2.5 px-4 py-2.5 bg-slate-900 text-white rounded-full shadow-2xl border-2 border-blue-500/80 hover:border-blue-400 hover:bg-slate-800 active:scale-95 transition-all cursor-pointer select-none group ring-4 ring-blue-500/20 animate-in fade-in zoom-in-95 duration-150"
+      <div
+        id="popup-flutuante-portaria-container"
+        onPointerDown={handlePointerDownSmall}
+        className={`fixed z-50 select-none animate-in fade-in zoom-in-95 duration-150 touch-none ${
+          isDragging ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing'
+        }`}
         style={{
-          left: Math.max(12, Math.min(window.innerWidth - 180, position.x)),
-          top: Math.max(12, Math.min(window.innerHeight - 56, position.y)),
+          left: Math.max(10, Math.min(window.innerWidth - 340, position.x)),
+          top: Math.max(10, Math.min(window.innerHeight - 80, position.y)),
         }}
-        title="Clique para expandir o Modo Portaria (PRISMAS)"
       >
-        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xs shadow-sm shadow-blue-500/50 group-hover:scale-110 transition-transform">
-          🔷
-        </div>
-        <div className="flex flex-col items-start leading-none text-left">
-          <span className="text-xs font-black tracking-wider uppercase text-white">
-            PRISMAS
-          </span>
-          <span className="text-[9px] text-blue-300 font-semibold mt-0.5">
-            {stats.emUso > 0 ? `${stats.emUso} em uso` : 'Portaria'}
-          </span>
-        </div>
-      </button>
+        <button
+          type="button"
+          id="btn-restaurar-modo-portaria"
+          onClick={handleClickSmall}
+          className={`flex items-center gap-3 px-4 py-3 text-white rounded-2xl shadow-2xl border-2 transition-all group ring-4 text-left max-w-sm ${
+            isDragging ? 'cursor-grabbing ring-blue-500/60 shadow-blue-500/30' : 'cursor-grab active:cursor-grabbing'
+          } ${popupBg} ${pulseEffect}`}
+          title="Clique para abrir a Portaria ou arraste para reposicionar"
+        >
+          <div
+            className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm shadow-md flex-shrink-0 group-hover:scale-105 transition-transform pointer-events-none ${iconBg}`}
+          >
+            {isEsgotado ? '🚨' : isAlertaApenasUm ? '⚠️' : '🔷'}
+          </div>
+          <div className="flex flex-col items-start leading-tight min-w-0 pr-1 pointer-events-none">
+            <span className="text-[10px] font-black tracking-wider uppercase text-slate-300 flex items-center gap-1">
+              🛡️ CONTROL PRISMA • PORTARIA
+            </span>
+            <span className={`text-xs mt-0.5 leading-snug break-words ${statusColor}`}>
+              {statusText}
+            </span>
+            <span className="text-[9px] text-slate-400 group-hover:text-white transition-colors mt-1 font-medium">
+              Clique para abrir ou arraste para mover
+            </span>
+          </div>
+        </button>
+      </div>
     );
   }
 

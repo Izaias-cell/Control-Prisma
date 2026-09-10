@@ -185,6 +185,7 @@ export interface Condominio {
   id: string;
   nome: string;
   endereco: string;
+  codigoPortariaAtual?: string | null;
   mostrarMensagem?: boolean;
   ativo?: boolean;
 }

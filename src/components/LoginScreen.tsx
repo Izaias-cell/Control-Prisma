@@ -173,11 +173,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   id="input-portaria-codigo"
                   type={showCode ? 'text' : 'password'}
                   maxLength={12}
-                  placeholder="Ex: CP-123456"
+                  placeholder="Ex: BV-067985"
                   value={codigoPortaria}
                   onChange={(e) => setCodigoPortaria(e.target.value)}
                   autoFocus
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-11 py-3 text-base tracking-widest text-white text-center font-mono font-bold focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-inner"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-11 py-3 text-base tracking-widest text-white text-center font-mono font-bold uppercase focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-inner"
                   required
                 />
                 <KeyRound className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />

@@ -421,6 +421,23 @@ export const api = {
     });
   },
 
+  cadastrarPrismasLote: (params: {
+    numeros?: string[];
+    numeroInicial?: number;
+    quantidade?: number;
+    padZero?: boolean;
+    corId: string;
+    corNome: string;
+    condominioId?: string;
+    usuarioId?: string;
+    usuarioNome?: string;
+  }): Promise<{ success: boolean; totalCriados: number; primeiro: string; ultimo: string; prismas?: Prisma[] }> => {
+    return request('/api/prismas/lote', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
   getTodosPrismas: (condominioId: string = 'condo-1'): Promise<{ prismas: Prisma[] }> => {
     return request(`/api/prismas/todos?condominioId=${encodeURIComponent(condominioId)}`);
   },
