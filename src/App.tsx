@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Prisma,
   PrismaEstado,
@@ -69,6 +70,14 @@ function AppContent() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
+  // Toast Helper
+  const showToast = useCallback((msg: string) => {
+    setSuccessToast(msg);
+    setTimeout(() => {
+      setSuccessToast(null);
+    }, 3500);
+  }, []);
+
   // Modals state
   const [selectedPrismaEntrega, setSelectedPrismaEntrega] = useState<Prisma | null>(null);
   const [isSubmittingEntrega, setIsSubmittingEntrega] = useState<boolean>(false);
@@ -100,15 +109,8 @@ function AppContent() {
   // Modal de escolha de modo de uso do dispositivo (acionado no login da Portaria ou pelo Header)
   const [isEscolhaModoOpen, setIsEscolhaModoOpen] = useState<boolean>(false);
 
-  const [isModoPortariaOpen, setIsModoPortariaOpen] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('prismas_device_mode');
-      if (saved === 'PORTARIA' && typeof window !== 'undefined' && window.innerWidth >= 768) {
-        return true;
-      }
-    } catch {}
-    return false;
-  });
+  // Modo Portaria inicializa como fechado para garantir que o Document PiP dependa sempre de ação explícita do usuário
+  const [isModoPortariaOpen, setIsModoPortariaOpen] = useState<boolean>(false);
 
   // Rastreamento seguro do ciclo de vida da autenticação pós-login
   const initialAuthCheckedRef = useRef<boolean>(false);
@@ -174,6 +176,144 @@ function AppContent() {
     }
   }, [isAuthLoading, isAuthenticated, authUser]);
 
+  // Estado da janela Document Picture-in-Picture (Always on Top)
+  const [pipWindow, setPipWindow] = useState<Window | null>(null);
+
+  // Cópia e sincronização segura de estilos para o documento PiP
+  const copyStylesToPip = (targetWindow: Window) => {
+    try {
+      const targetDoc = targetWindow.document;
+
+      // 1. Copiar regras CSS e links de folhas de estilo
+      Array.from(document.styleSheets).forEach((sheet) => {
+        try {
+          if (sheet.href) {
+            const link = targetDoc.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = sheet.href;
+            targetDoc.head.appendChild(link);
+          } else if (sheet.cssRules) {
+            const style = targetDoc.createElement('style');
+            Array.from(sheet.cssRules).forEach((rule) => {
+              style.appendChild(targetDoc.createTextNode(rule.cssText));
+            });
+            targetDoc.head.appendChild(style);
+          }
+        } catch (sheetErr) {
+          // Proteção contra restrições de CORS em cssRules: clonar nó dono como fallback
+          try {
+            if (sheet.ownerNode) {
+              targetDoc.head.appendChild(sheet.ownerNode.cloneNode(true));
+            }
+          } catch {}
+        }
+      });
+
+      // 2. Clonar tags <style> e <link rel="stylesheet"> explícitas do <head>
+      document.head.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+        try {
+          if (node.tagName === 'LINK') {
+            const href = (node as HTMLLinkElement).href;
+            if (!targetDoc.querySelector(`link[href="${href}"]`)) {
+              targetDoc.head.appendChild(node.cloneNode(true));
+            }
+          } else if (node.tagName === 'STYLE') {
+            targetDoc.head.appendChild(node.cloneNode(true));
+          }
+        } catch {}
+      });
+    } catch (globalErr) {
+      console.warn('Erro ao transferir estilos para a janela PiP:', globalErr);
+    }
+  };
+
+  // Fechamento limpo do Modo Portaria e da janela PiP
+  const handleCloseModoPortaria = useCallback(() => {
+    if (pipWindow && !pipWindow.closed) {
+      try {
+        pipWindow.close();
+      } catch {}
+    }
+    setPipWindow(null);
+    setIsModoPortariaOpen(false);
+    try {
+      localStorage.setItem('prismas_device_mode', 'NORMAL');
+    } catch {}
+  }, [pipWindow]);
+
+  // Abertura explícita do Modo Portaria via Document Picture-in-Picture (com fallback)
+  const handleAbrirModoPortaria = useCallback(async () => {
+    // 1. Mecanismo prioritário: Document Picture-in-Picture se suportado pelo navegador
+    if (typeof window !== 'undefined' && 'documentPictureInPicture' in window && window.documentPictureInPicture) {
+      try {
+        if (pipWindow && !pipWindow.closed) {
+          pipWindow.focus();
+          return;
+        }
+
+        const pip = await window.documentPictureInPicture.requestWindow({
+          width: 420,
+          height: 700,
+        });
+
+        copyStylesToPip(pip);
+
+        pip.document.title = 'CONTROL PRISMA • Modo Portaria';
+        pip.document.body.className = 'bg-slate-950 text-slate-100 font-sans antialiased m-0 p-0 overflow-hidden';
+
+        const handlePiPClose = () => {
+          setPipWindow(null);
+          setIsModoPortariaOpen(false);
+        };
+
+        pip.addEventListener('pagehide', handlePiPClose, { once: true });
+
+        setPipWindow(pip);
+        setIsModoPortariaOpen(true);
+        showToast('🛡️ Modo Portaria sobreposto ativado (Document PiP)');
+        return;
+      } catch (err) {
+        console.warn('Document Picture-in-Picture não pôde ser iniciado, utilizando modo flutuante interno:', err);
+      }
+    }
+
+    // 2. Fallback seguro: abre o Modo Portaria na tela da aplicação
+    setIsModoPortariaOpen(true);
+    showToast('🛡️ Modo Portaria ativado');
+  }, [pipWindow, showToast]);
+
+  // Limpeza de janelas órfãs na desmontagem ou fechamento da aba principal
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (pipWindow && !pipWindow.closed) {
+        try {
+          pipWindow.close();
+        } catch {}
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (pipWindow && !pipWindow.closed) {
+        try {
+          pipWindow.close();
+        } catch {}
+      }
+    };
+  }, [pipWindow]);
+
+  // Fechamento automático da janela PiP em caso de logout
+  useEffect(() => {
+    if (!isAuthenticated && pipWindow && !pipWindow.closed) {
+      try {
+        pipWindow.close();
+      } catch {}
+      setPipWindow(null);
+      setIsModoPortariaOpen(false);
+    }
+  }, [isAuthenticated, pipWindow]);
+
   const handleSelectDeviceMode = (mode: DeviceUsageMode) => {
     try {
       localStorage.setItem('prismas_device_mode', mode);
@@ -184,10 +324,9 @@ function AppContent() {
     setDeviceMode(mode);
     setIsEscolhaModoOpen(false);
     if (mode === 'PORTARIA') {
-      setIsModoPortariaOpen(true);
-      showToast('🛡️ Modo Portaria ativado');
+      handleAbrirModoPortaria();
     } else {
-      setIsModoPortariaOpen(false);
+      handleCloseModoPortaria();
       showToast('💻 Modo Normal ativado');
     }
   };
@@ -201,10 +340,9 @@ function AppContent() {
     } catch {}
     setDeviceMode(mode);
     if (mode === 'PORTARIA') {
-      setIsModoPortariaOpen(true);
-      showToast('🛡️ Modo Portaria ativado');
+      handleAbrirModoPortaria();
     } else {
-      setIsModoPortariaOpen(false);
+      handleCloseModoPortaria();
       showToast('💻 Modo Normal ativado');
     }
   };
@@ -219,19 +357,7 @@ function AppContent() {
   }, []);
 
   const handleAbrirEmJanelaDesktop = () => {
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('mode', 'portaria-popup');
-      const width = 400;
-      const height = 680;
-      const left = window.screen.availWidth - width - 20;
-      const top = 40;
-      window.open(
-        url.toString(),
-        'EncomendasInteligentesPortaria',
-        `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes`
-      );
-    }
+    handleAbrirModoPortaria();
   };
 
   // Current Time Tick to automatically refresh identified operator every 30s
@@ -243,7 +369,7 @@ function AppContent() {
     return () => clearInterval(timer);
   }, []);
 
-  // Environment Check (Settings area is strictly enabled only in development)
+  // Environment Check (Settings area is enabled in development or for Admin/Síndico)
   const isDevEnvironment =
     Boolean((import.meta as any).env?.DEV) ||
     (import.meta as any).env?.MODE === 'development' ||
@@ -251,6 +377,17 @@ function AppContent() {
       (window.location.hostname === 'localhost' ||
         window.location.hostname.includes('127.0.0.1') ||
         window.location.hostname.includes('ais-dev')));
+
+  const isAdminOrSindico = Boolean(
+    authUser && (
+      authUser.role === UserRole.ADMIN ||
+      authUser.role === UserRole.SINDICO ||
+      authUser.tipoSessao === TipoSessao.ADMIN ||
+      authUser.tipoSessao === TipoSessao.SINDICO
+    )
+  );
+
+  const canAccessConfig = isAdminOrSindico;
 
   // Automatically identify the operator on duty based on current date, time, shift and parity
   const operadorIdentificado = useMemo(() => {
@@ -368,14 +505,6 @@ function AppContent() {
       window.removeEventListener('focus', handleFocus);
     };
   }, [loadDashboard]);
-
-  // Toast Helper
-  const showToast = (msg: string) => {
-    setSuccessToast(msg);
-    setTimeout(() => {
-      setSuccessToast(null);
-    }, 3500);
-  };
 
   // FLUXO ENTREGAR PRISMA (ENTREGA + CÓPIA AUTOMÁTICA CONDICIONAL)
   const handleConfirmEntrega = async (params: {
@@ -634,10 +763,10 @@ function AppContent() {
     );
   }
 
-  // AMBIENTE EXCLUSIVO DO MODO PORTARIA (sem Dashboard ao fundo)
+  // AMBIENTE DO MODO PORTARIA (Com Document PiP quando ativo ou tela exclusiva como fallback)
   if (isModoPortariaOpen) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white relative overflow-hidden">
+    const portariaContent = (
+      <div className="w-full h-full min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white relative overflow-hidden">
         <FloatingPortariaWindow
           condominioAtual={condominioAtual}
           operadorIdentificado={operadorIdentificado}
@@ -665,10 +794,11 @@ function AppContent() {
           isOnline={isOnline}
           isRefreshing={isRefreshing}
           onRefresh={() => loadDashboard(true)}
-          onClose={() => setIsModoPortariaOpen(false)}
-          onAbrirEmJanelaDesktop={handleAbrirEmJanelaDesktop}
+          onClose={handleCloseModoPortaria}
+          onAbrirEmJanelaDesktop={pipWindow ? undefined : handleAbrirModoPortaria}
+          onOpenGerenciamento={() => setIsGerenciamentoOpen(true)}
           ultimasMovimentacoes={ultimasMovimentacoes}
-          isStandalonePopup={false}
+          isStandalonePopup={Boolean(pipWindow)}
         />
 
         {/* Modal de Entrega */}
@@ -688,6 +818,16 @@ function AppContent() {
           onUpdateSuccess={() => loadDashboard(false)}
         />
 
+        {/* Gerenciamento de Prismas no Modo Portaria */}
+        <GerenciarPrismasModal
+          isOpen={isGerenciamentoOpen}
+          onClose={() => setIsGerenciamentoOpen(false)}
+          prismas={prismas}
+          condominioId={condominioAtualId}
+          usuarioAtual={usuarioAtual}
+          onUpdateSuccess={() => loadDashboard(false)}
+        />
+
         {/* Toast Notificação de Sucesso */}
         {successToast && (
           <div
@@ -700,6 +840,52 @@ function AppContent() {
         )}
       </div>
     );
+
+    // Se o Document Picture-in-Picture estiver ativo com janela aberta, transporta o conteúdo para a janela PiP
+    if (pipWindow && !pipWindow.closed) {
+      return (
+        <>
+          {createPortal(portariaContent, pipWindow.document.body)}
+          {/* Interface de apoio na aba principal */}
+          <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 font-sans antialiased text-center select-none">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-3xl shadow-xl shadow-blue-500/30 mb-4 border border-blue-400/40">
+              🛡️
+            </div>
+            <h1 className="text-xl sm:text-2xl font-black text-white tracking-wide uppercase mb-2">
+              MODO PORTARIA EM JANELA SOBREPOSTA
+            </h1>
+            <p className="text-sm text-blue-200 max-w-md mb-6 leading-relaxed">
+              A interface da Portaria está aberta e sempre visível sobre outros programas (Document Picture-in-Picture). Você pode operar entregas e gerenciar prismas diretamente nela.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                id="btn-focar-janela-pip"
+                onClick={() => {
+                  if (pipWindow && !pipWindow.closed) {
+                    pipWindow.focus();
+                  }
+                }}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-xl text-xs font-black tracking-wide uppercase transition-all shadow-md shadow-blue-600/30 cursor-pointer"
+              >
+                Focar Janela Sobreposta
+              </button>
+              <button
+                type="button"
+                id="btn-fechar-pip-voltar-normal"
+                onClick={handleCloseModoPortaria}
+                className="px-4 py-2.5 bg-slate-800 hover:bg-rose-900/60 active:bg-rose-900 border border-slate-700 hover:border-rose-500 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Fechar e Retornar ao Modo Normal
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    // Fallback: caso PiP não esteja ativo, renderiza na janela principal normalmente
+    return portariaContent;
   }
 
   return (
@@ -718,7 +904,7 @@ function AppContent() {
         onOpenAuditoria={() => setIsAuditoriaOpen(true)}
         onOpenGerenciamento={() => setIsGerenciamentoOpen(true)}
         onOpenConcorrenciaSim={() => setIsConcorrenciaOpen(true)}
-        onOpenConfiguracoes={() => setIsConfiguracoesOpen(true)}
+        onOpenConfiguracoes={canAccessConfig ? () => setIsConfiguracoesOpen(true) : undefined}
         isDevEnvironment={isDevEnvironment}
         isOnline={isOnline}
         onRefresh={() => loadDashboard(true)}
@@ -726,9 +912,9 @@ function AppContent() {
         isModoPortariaActive={isModoPortariaOpen}
         onToggleModoPortaria={() => {
           if (isModoPortariaOpen) {
-            setIsModoPortariaOpen(false);
+            handleCloseModoPortaria();
           } else {
-            setIsEscolhaModoOpen(true);
+            handleAbrirModoPortaria();
           }
         }}
       />
@@ -929,8 +1115,8 @@ function AppContent() {
         onSuccess={() => loadDashboard(false)}
       />
 
-      {/* 7. Configurações do Sistema (Ambiente de Desenvolvimento) */}
-      {isDevEnvironment && (
+      {/* 7. Configurações do Sistema */}
+      {canAccessConfig && (
         <ConfiguracoesModal
           isOpen={isConfiguracoesOpen}
           onClose={() => setIsConfiguracoesOpen(false)}

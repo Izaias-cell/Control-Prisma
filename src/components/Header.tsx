@@ -69,6 +69,25 @@ export const Header: React.FC<HeaderProps> = ({
     operadorIdentificado.operador.horaInicio > operadorIdentificado.operador.horaFim
   );
 
+  const canAccessConfig = Boolean(
+    authUser &&
+      (authUser.role === UserRole.ADMIN ||
+        authUser.role === UserRole.SINDICO ||
+        authUser.tipoSessao === TipoSessao.ADMIN ||
+        authUser.tipoSessao === TipoSessao.SINDICO)
+  );
+
+  const canAccessPrismas = Boolean(
+    (authUser &&
+      (authUser.role === UserRole.ADMIN ||
+        authUser.role === UserRole.SINDICO ||
+        authUser.role === UserRole.PORTEIRO ||
+        authUser.tipoSessao === TipoSessao.ADMIN ||
+        authUser.tipoSessao === TipoSessao.SINDICO ||
+        authUser.tipoSessao === TipoSessao.PORTARIA)) ||
+      operadorIdentificado.operador
+  );
+
   return (
     <header
       id="main-app-header"
@@ -247,7 +266,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {/* Prism Management */}
-            {((authUser && authUser.role !== UserRole.PORTEIRO) || operadorIdentificado.operador?.role !== UserRole.PORTEIRO) && (
+            {canAccessPrismas && (
               <button
                 id="btn-gerenciar-prismas-nav"
                 onClick={onOpenGerenciamento}
@@ -281,13 +300,13 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden lg:inline text-[11px] font-bold">Concorrência</span>
             </button>
 
-            {/* Settings button - STRICTLY conditionally rendered in Dev environment */}
-            {isDevEnvironment && onOpenConfiguracoes && (
+            {/* Settings button - conditionally rendered for Admin, Síndico or Dev environment */}
+            {canAccessConfig && onOpenConfiguracoes && (
               <button
                 id="btn-configuracoes-nav"
                 onClick={onOpenConfiguracoes}
                 className="flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 active:bg-amber-500/40 text-amber-300 border border-amber-500/40 px-2.5 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all shadow-sm"
-                title="Configurações (Ambiente de Desenvolvimento)"
+                title="Configurações do Sistema"
               >
                 <Settings className="w-3.5 h-3.5 text-amber-400" />
                 <span className="text-[11px] uppercase tracking-wide">

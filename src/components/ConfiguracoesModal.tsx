@@ -279,15 +279,21 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
     setTimeout(() => setCodigoCopied(false), 3000);
   };
 
+  // Guarda defensiva obrigatória: apenas ADMIN e SÍNDICO podem acessar ou carregar configurações
+  const isAuthorized = Boolean(
+    usuarioAtual &&
+      (usuarioAtual.role === UserRole.ADMIN || usuarioAtual.role === UserRole.SINDICO)
+  );
+
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && isAuthorized) {
       carregarUsuarios();
       carregarPrismas();
       carregarContatos();
       carregarCondominio();
       carregarPortariaStatus();
     }
-  }, [isOpen, condominioId]);
+  }, [isOpen, isAuthorized, condominioId]);
 
   // ==================== Usuários Handlers ====================
   const handleOpenNewUser = () => {
@@ -711,7 +717,7 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
     );
   });
 
-  if (!isOpen) return null;
+  if (!isOpen || !isAuthorized) return null;
 
   return (
     <div

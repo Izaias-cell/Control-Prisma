@@ -27,6 +27,7 @@ import {
   Minus,
   Move,
   Maximize2,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 interface FloatingPortariaWindowProps {
@@ -49,6 +50,7 @@ interface FloatingPortariaWindowProps {
   onRegistrarPendencia: (prismaId: string, motivo: string) => Promise<void>;
   onResolverPendencia: (prismaId: string) => Promise<void>;
   onOpenHistoricoById: (prismaId: string) => void;
+  onOpenGerenciamento?: () => void;
   isOnline: boolean;
   isRefreshing: boolean;
   onRefresh: () => void;
@@ -79,6 +81,7 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   onRegistrarPendencia,
   onResolverPendencia,
   onOpenHistoricoById,
+  onOpenGerenciamento,
   isOnline,
   isRefreshing,
   onRefresh,
@@ -470,6 +473,19 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
             }`}
             title={isOnline ? 'Conectado ao servidor' : 'Sem conexão'}
           />
+
+          {onOpenGerenciamento && (
+            <button
+              type="button"
+              id="btn-gerenciar-prismas-portaria"
+              onClick={onOpenGerenciamento}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-black tracking-wider text-amber-300 hover:text-amber-200 bg-amber-950/80 hover:bg-amber-900 border border-amber-600/60 rounded-lg transition-colors cursor-pointer shadow-sm uppercase"
+              title="Gerenciar Prismas"
+            >
+              <SlidersHorizontal className="w-3 h-3 text-amber-400" />
+              <span>PRISMAS</span>
+            </button>
+          )}
 
           <button
             type="button"

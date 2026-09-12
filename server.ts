@@ -958,7 +958,7 @@ export function createExpressApp(): express.Application {
   app.post(
     '/api/prismas',
     requireAuth,
-    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
+    requireRole([UserRole.ADMIN, UserRole.SINDICO, UserRole.PORTEIRO]),
     async (req, res) => {
       const { numero, corId, corNome } = req.body;
 
@@ -996,7 +996,7 @@ export function createExpressApp(): express.Application {
   app.post(
     '/api/prismas/lote',
     requireAuth,
-    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
+    requireRole([UserRole.ADMIN, UserRole.SINDICO, UserRole.PORTEIRO]),
     async (req, res) => {
       const { numeros, numeroInicial, quantidade, padZero, corId, corNome } = req.body;
 
@@ -1101,7 +1101,7 @@ export function createExpressApp(): express.Application {
       id: req.user!.usuarioId,
       nome: req.user!.nome,
       role: req.user!.role,
-      cargo: req.user!.role === UserRole.SINDICO ? 'Síndico(a)' : 'Administrador',
+      cargo: req.user!.role === UserRole.SINDICO ? 'Síndico(a)' : req.user!.role === UserRole.PORTEIRO ? 'Porteiro(a)' : 'Administrador',
     };
 
     try {
@@ -1130,13 +1130,13 @@ export function createExpressApp(): express.Application {
   app.post(
     '/api/prismas/:id/excluir',
     requireAuth,
-    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
+    requireRole([UserRole.ADMIN, UserRole.SINDICO, UserRole.PORTEIRO]),
     handleExcluirPrisma
   );
   app.delete(
     '/api/prismas/:id',
     requireAuth,
-    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
+    requireRole([UserRole.ADMIN, UserRole.SINDICO, UserRole.PORTEIRO]),
     handleExcluirPrisma
   );
 
