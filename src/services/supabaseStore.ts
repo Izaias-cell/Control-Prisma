@@ -21,6 +21,7 @@ import {
 } from '../types';
 import { MAX_LOGIN_ATTEMPTS, hashPin, verifyPin, derivarPrefixoCondominio, gerarCodigoPortariaSeguro } from './authCrypto';
 import { sortPrismasNumericos } from '../utils/prismaSort';
+import { extrairNumeroCasaValido, formatarCasaExibicao } from '../utils/clipboardUtils';
 
 export interface StorageStatusResult {
   condominio?: Condominio;
@@ -36,6 +37,7 @@ export interface StorageStatusResult {
   };
   prismas: Prisma[];
   ultimasMovimentacoes: Movimentacao[];
+  rankingCasas?: string[];
 }
 
 export interface DbStoreData {
@@ -66,6 +68,7 @@ export class SupabaseStore {
   private dbBackupPath: string;
   private tablesReady: boolean | null = null;
   private lastTableCheck: number = 0;
+  private rankingCasasCache: Map<string, { ranking: string[]; timestamp: number }> = new Map();
 
   constructor() {
     this.dbBackupPath = path.join(process.cwd(), 'data', 'db_store.json');
@@ -678,6 +681,219 @@ export class SupabaseStore {
   }
 
   // ==========================================
+  // RANKING INTELIGENTE DAS CASAS MAIS FREQUENTES (RÁPIDO)
+  // ==========================================
+  public invalidateRankingCasasCache(condominioId?: string): void {
+    if (condominioId) {
+      this.rankingCasasCache.delete(condominioId);
+    } else {
+      this.rankingCasasCache.clear();
+    }
+  }
+
+  /**
+   * Processa lista de movimentações para apurar as 6 casas que mais utilizam prismas.
+   * Regras determinísticas:
+   * 1. Apenas casas válidas entre 01 e 311.
+   * 2. Janela prioritária: últimos 30 dias. Recorre ao histórico anterior caso < 6 casas.
+   * 3. Desempate: Maior frequência -> Uso mais recente -> Menor número de casa.
+   * 4. Preenche faltantes com casas válidas do padrão determinístico de fallback.
+   */
+  public processarRankingMovimentacoes(
+    movimentacoes: Array<{ casa: string; data_hora?: string; dataHora?: string }>,
+    limit: number = 6
+  ): string[] {
+    const DEFAULT_FALLBACK_HOUSES = ['12', '17', '31', '42', '105', '208'];
+    const now = Date.now();
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+    interface HouseStat {
+      num: number;
+      formatted: string;
+      countRecent: number;
+      lastUsedRecent: number;
+      countTotal: number;
+      lastUsedTotal: number;
+    }
+
+    const map = new Map<number, HouseStat>();
+
+    for (const mov of movimentacoes) {
+      const num = extrairNumeroCasaValido(mov.casa);
+      if (num === null) continue; // Descarta casas fora do intervalo 01-311
+
+      const dateStr = mov.data_hora || mov.dataHora;
+      const timestamp = dateStr ? new Date(dateStr).getTime() : 0;
+
+      let stat = map.get(num);
+      if (!stat) {
+        stat = {
+          num,
+          formatted: formatarCasaExibicao(num),
+          countRecent: 0,
+          lastUsedRecent: 0,
+          countTotal: 0,
+          lastUsedTotal: 0,
+        };
+        map.set(num, stat);
+      }
+
+      stat.countTotal += 1;
+      if (timestamp > stat.lastUsedTotal) {
+        stat.lastUsedTotal = timestamp;
+      }
+
+      if (timestamp >= thirtyDaysAgo) {
+        stat.countRecent += 1;
+        if (timestamp > stat.lastUsedRecent) {
+          stat.lastUsedRecent = timestamp;
+        }
+      }
+    }
+
+    const allStats = Array.from(map.values());
+
+    // 1. Casas da janela recente de 30 dias (ordenadas pelo critério de desempate)
+    const recentStats = allStats
+      .filter((s) => s.countRecent > 0)
+      .sort((a, b) => {
+        if (b.countRecent !== a.countRecent) {
+          return b.countRecent - a.countRecent; // 1. Maior frequência recente
+        }
+        if (b.lastUsedRecent !== a.lastUsedRecent) {
+          return b.lastUsedRecent - a.lastUsedRecent; // 2. Uso mais recente
+        }
+        return a.num - b.num; // 3. Menor número da casa
+      });
+
+    const ranking: string[] = [];
+    const usedNums = new Set<number>();
+
+    for (const s of recentStats) {
+      if (ranking.length >= limit) break;
+      ranking.push(s.formatted);
+      usedNums.add(s.num);
+    }
+
+    // 2. Se faltarem casas para completar o limite, busca do histórico geral anterior
+    if (ranking.length < limit) {
+      const olderStats = allStats
+        .filter((s) => !usedNums.has(s.num))
+        .sort((a, b) => {
+          if (b.countTotal !== a.countTotal) {
+            return b.countTotal - a.countTotal; // 1. Maior frequência total
+          }
+          if (b.lastUsedTotal !== a.lastUsedTotal) {
+            return b.lastUsedTotal - a.lastUsedTotal; // 2. Uso mais recente
+          }
+          return a.num - b.num; // 3. Menor número da casa
+        });
+
+      for (const s of olderStats) {
+        if (ranking.length >= limit) break;
+        ranking.push(s.formatted);
+        usedNums.add(s.num);
+      }
+    }
+
+    // 3. Se ainda faltarem casas, completa com fallback determinístico válido (01-311)
+    if (ranking.length < limit) {
+      for (const fb of DEFAULT_FALLBACK_HOUSES) {
+        if (ranking.length >= limit) break;
+        const fbNum = extrairNumeroCasaValido(fb);
+        if (fbNum !== null && !usedNums.has(fbNum)) {
+          ranking.push(formatarCasaExibicao(fbNum));
+          usedNums.add(fbNum);
+        }
+      }
+    }
+
+    // 4. Garantia final de preenchimento até o limite (se necessário)
+    let candidate = 1;
+    while (ranking.length < limit && candidate <= 311) {
+      if (!usedNums.has(candidate)) {
+        ranking.push(formatarCasaExibicao(candidate));
+        usedNums.add(candidate);
+      }
+      candidate++;
+    }
+
+    return ranking.slice(0, limit);
+  }
+
+  public calcularRankingFromData(
+    movimentacoes: Movimentacao[],
+    condominioId: string,
+    limit: number = 6
+  ): string[] {
+    const entregasDoCondo = (movimentacoes || []).filter(
+      (m) =>
+        (m.condominioId === condominioId || (m as any).condominio_id === condominioId) &&
+        m.tipo === MovimentacaoTipo.ENTREGA
+    );
+    return this.processarRankingMovimentacoes(entregasDoCondo, limit);
+  }
+
+  /**
+   * Obtém ranking das 6 casas mais frequentes com cache em memória (5 minutos).
+   */
+  public async getRankingCasasFrequentes(
+    condominioId: string = 'condo-1',
+    limit: number = 6
+  ): Promise<string[]> {
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const cached = this.rankingCasasCache.get(condominioId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.ranking.length >= limit) {
+      return cached.ranking.slice(0, limit);
+    }
+
+    try {
+      if (!this.isActive()) {
+        const fallbackRanking = this.calcularRankingFromData(
+          this.readColdBackupData().movimentacoes || [],
+          condominioId,
+          limit
+        );
+        this.rankingCasasCache.set(condominioId, { ranking: fallbackRanking, timestamp: Date.now() });
+        return fallbackRanking;
+      }
+
+      const client = this.getClientOrThrow();
+      const { data: rows, error } = await client
+        .from('movimentacoes')
+        .select('casa, data_hora')
+        .eq('condominio_id', condominioId)
+        .eq('tipo', MovimentacaoTipo.ENTREGA)
+        .order('data_hora', { ascending: false })
+        .limit(500);
+
+      if (error) {
+        if (this.isTableMissingError(error)) {
+          const fallbackRanking = this.calcularRankingFromData(
+            this.readColdBackupData().movimentacoes || [],
+            condominioId,
+            limit
+          );
+          return fallbackRanking;
+        }
+        console.warn('[SupabaseStore] Erro ao consultar ranking de casas:', error.message);
+        return cached?.ranking && cached.ranking.length >= limit
+          ? cached.ranking
+          : ['12', '17', '31', '42', '105', '208'];
+      }
+
+      const ranking = this.processarRankingMovimentacoes(rows || [], limit);
+      this.rankingCasasCache.set(condominioId, { ranking, timestamp: Date.now() });
+      return ranking;
+    } catch (err) {
+      console.warn('[SupabaseStore] Exceção ao obter ranking de casas:', err);
+      return cached?.ranking && cached.ranking.length >= limit
+        ? cached.ranking
+        : ['12', '17', '31', '42', '105', '208'];
+    }
+  }
+
+  // ==========================================
   // 1. DASHBOARD STATUS (EXCLUSIVAMENTE SUPABASE)
   // ==========================================
   public async getStatus(condominioId: string = 'condo-1'): Promise<StorageStatusResult> {
@@ -689,6 +905,7 @@ export class SupabaseStore {
         { data: usuariosRaw, error: uErr },
         { data: prismasRaw, error: pErr },
         { data: movimentacoesRaw, error: mErr },
+        rankingCasas,
       ] = await Promise.all([
         client.from('condominios').select('*'),
         client.from('usuarios').select('*').eq('condominio_id', condominioId).eq('excluido', false),
@@ -699,6 +916,7 @@ export class SupabaseStore {
           .eq('condominio_id', condominioId)
           .order('data_hora', { ascending: false })
           .limit(20),
+        this.getRankingCasasFrequentes(condominioId),
       ]);
 
       if (cErr || uErr || pErr || mErr) {
@@ -763,6 +981,7 @@ export class SupabaseStore {
         },
         prismas: activePrismas,
         ultimasMovimentacoes: mappedMovimentacoes,
+        rankingCasas,
       };
     } catch (err: any) {
       if (this.isTableMissingError(err) || !this.isActive()) {
@@ -791,6 +1010,7 @@ export class SupabaseStore {
     const emUso = activePrismas.filter((p) => p.estado === PrismaEstado.EM_USO).length;
     const pendentes = activePrismas.filter((p) => p.estado === PrismaEstado.PENDENTE).length;
     const indisponiveis = activePrismas.filter((p) => p.estado === PrismaEstado.INDISPONIVEL).length;
+    const rankingCasas = this.calcularRankingFromData(backupData.movimentacoes || [], condominioId, 6);
 
     return {
       condominio: condo,
@@ -805,6 +1025,7 @@ export class SupabaseStore {
       },
       prismas: activePrismas,
       ultimasMovimentacoes: (backupData.movimentacoes || []).slice(0, 20),
+      rankingCasas,
     };
   }
 
@@ -946,6 +1167,9 @@ export class SupabaseStore {
         dadosNovos: { casa: params.casa.trim(), movimentacaoId: movId },
       });
 
+      // Invalida cache de ranking para atualização imediata
+      this.invalidateRankingCasasCache(params.condominioId);
+
       return { success: true, prisma: prismaResponse, movimentacao: movResponse, status: 200 };
     } catch (err: any) {
       if (this.isTableMissingError(err)) {
@@ -1022,6 +1246,9 @@ export class SupabaseStore {
       detalhes: `Prisma ${prisma.numero} entregue para a residência ${params.casa.trim()}`,
       dadosNovos: { casa: params.casa.trim(), movimentacaoId: movId },
     });
+
+    // Invalida cache de ranking para atualização imediata
+    this.invalidateRankingCasasCache(params.condominioId);
 
     return { success: true, prisma, movimentacao: movResponse, status: 200 };
   }
@@ -1760,6 +1987,9 @@ export class SupabaseStore {
         dadosNovos: { casa: params.novaCasa.trim(), motivo: params.motivoCorrecao.trim() },
       });
 
+      // Invalida cache de ranking caso a movimentação corrigida seja de entrega
+      this.invalidateRankingCasasCache(params.condominioId);
+
       return { success: true, movimentacao: mappedMov, status: 200 };
     } catch (err: any) {
       if (this.isTableMissingError(err)) {
@@ -1806,6 +2036,9 @@ export class SupabaseStore {
       dadosAnteriores: { casa: casaAntiga },
       dadosNovos: { casa: params.novaCasa.trim(), motivo: params.motivoCorrecao.trim() },
     });
+
+    // Invalida cache de ranking caso a movimentação corrigida seja de entrega
+    this.invalidateRankingCasasCache(params.condominioId);
 
     return { success: true, movimentacao: mov, status: 200 };
   }

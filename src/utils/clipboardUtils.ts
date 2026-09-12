@@ -64,3 +64,36 @@ export function formatMensagemRecolhimento(numero: string, corNome: string, casa
   return `Casa ${casaLimpa} entregou prisma ${num}.`;
 }
 
+/**
+ * Valida e extrai número de casa no intervalo permitido de 01 a 311.
+ * Normaliza variações como "01", "1", "Casa 01", "Casa 1", "001".
+ * Retorna o número inteiro (1..311) ou null se for inválido / fora do escopo.
+ */
+export function extrairNumeroCasaValido(raw: string): number | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  const cleaned = trimmed
+    .replace(/^casa\s*:?\s*/i, '')
+    .replace(/^cs\s*:?\s*/i, '')
+    .replace(/^#\s*/, '')
+    .trim();
+  const parsed = parseInt(cleaned, 10);
+  if (isNaN(parsed) || parsed < 1 || parsed > 311) {
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * Formata o número da casa para exibição padronizada no RÁPIDO:
+ * - Menor que 10: com zero à esquerda ("01", "08", "09")
+ * - 10 ou maior: número normal ("10", "43", "127", "311")
+ */
+export function formatarCasaExibicao(num: number): string {
+  if (num < 10) {
+    return `0${num}`;
+  }
+  return String(num);
+}
+
+

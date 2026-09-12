@@ -27,6 +27,7 @@ export interface DashboardResponse {
   stats: DashboardStats;
   prismas: Prisma[];
   ultimasMovimentacoes: Movimentacao[];
+  rankingCasas?: string[];
 }
 
 export interface AuthMeResponse {
@@ -313,6 +314,10 @@ export const api = {
     return request<DashboardResponse>(`/api/status?condominioId=${encodeURIComponent(condominioId)}`);
   },
 
+  getRankingCasas: (condominioId: string = 'condo-1'): Promise<{ success: boolean; ranking: string[] }> => {
+    return request(`/api/condominios/${encodeURIComponent(condominioId)}/ranking-casas`);
+  },
+
   entregarPrisma: (params: {
     prismaId: string;
     casa: string;
@@ -485,7 +490,9 @@ export const api = {
     condominioId?: string;
     adminId?: string;
     adminNome?: string;
-  }): Promise<{ success: boolean; usuario: Usuario }> => {
+    identificador?: string;
+    senhaInicial?: string;
+  }): Promise<{ success: boolean; usuario: Usuario; credencial?: CredencialAcessoSanitizada }> => {
     return request('/api/usuarios', {
       method: 'POST',
       body: JSON.stringify(params),
@@ -655,11 +662,24 @@ export const api = {
 
   redefinirSenha: (
     id: string,
-    params: { senha: string; identificador?: string }
-  ): Promise<{ success: boolean; credencial: CredencialAcessoSanitizada }> => {
+    params: { senha: string; senhaAtual?: string; identificador?: string }
+  ): Promise<{ success: boolean; credencial?: CredencialAcessoSanitizada; message?: string }> => {
     return request(`/api/credenciais/${encodeURIComponent(id)}/senha`, {
       method: 'PUT',
       body: JSON.stringify(params),
+    });
+  },
+
+  alterarMinhaSenha: (params: {
+    senhaAtual: string;
+    novaSenha: string;
+  }): Promise<{ success: boolean; message: string; credencial?: CredencialAcessoSanitizada }> => {
+    return request('/api/credenciais/me/senha', {
+      method: 'PUT',
+      body: JSON.stringify({
+        senhaAtual: params.senhaAtual,
+        senha: params.novaSenha,
+      }),
     });
   },
 

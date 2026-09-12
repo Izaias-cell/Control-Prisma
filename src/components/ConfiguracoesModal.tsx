@@ -59,6 +59,7 @@ interface ConfiguracoesModalProps {
   usuarioAtual: Usuario;
   onRefreshData: () => Promise<void>;
   onOpenHistoricoById?: (prismaId: string) => void;
+  onOpenAlterarSenha?: () => void;
   deviceMode?: 'PORTARIA' | 'NORMAL';
   onChangeDeviceMode?: (mode: 'PORTARIA' | 'NORMAL') => void;
 }
@@ -73,6 +74,7 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
   usuarioAtual,
   onRefreshData,
   onOpenHistoricoById,
+  onOpenAlterarSenha,
   deviceMode = 'NORMAL',
   onChangeDeviceMode,
 }) => {
@@ -94,6 +96,10 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
   const [formParidade12x36, setFormParidade12x36] = useState<Paridade12x36>(Paridade12x36.IMPAR);
   const [formHoraInicio, setFormHoraInicio] = useState<string>('07:00');
   const [formHoraFim, setFormHoraFim] = useState<string>('19:00');
+  const [formIdentificador, setFormIdentificador] = useState<string>('');
+  const [formSenhaInicial, setFormSenhaInicial] = useState<string>('');
+  const [formConfirmarSenha, setFormConfirmarSenha] = useState<string>('');
+  const [showFormPassword, setShowFormPassword] = useState<boolean>(false);
   const [userError, setUserError] = useState<string | null>(null);
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [userToDelete, setUserToDelete] = useState<Usuario | null>(null);
@@ -238,6 +244,10 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
   };
 
   const handleGerarNovoCodigo = async () => {
+    if (usuarioAtual?.role !== UserRole.ADMIN) {
+      setPortariaActionError('Apenas o Administrador possui permissão para gerar novos códigos de acesso da portaria.');
+      return;
+    }
     try {
       setIsGerandoCodigo(true);
       setPortariaActionError(null);
@@ -257,6 +267,10 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
   };
 
   const handleDesbloquearPortaria = async () => {
+    if (usuarioAtual?.role !== UserRole.ADMIN) {
+      setPortariaActionError('Apenas o Administrador possui permissão para desbloquear a estação da portaria.');
+      return;
+    }
     try {
       setIsDesbloqueandoPortaria(true);
       setPortariaActionError(null);
@@ -307,6 +321,10 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
     setFormParidade12x36(Paridade12x36.IMPAR);
     setFormHoraInicio('07:00');
     setFormHoraFim('19:00');
+    setFormIdentificador('');
+    setFormSenhaInicial('');
+    setFormConfirmarSenha('');
+    setShowFormPassword(false);
     setUserError(null);
     setIsUserFormOpen(true);
   };
@@ -367,9 +385,33 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
           adminNome: usuarioAtual.nome,
         });
       } else {
+        // Validação estrita para o perfil SÍNDICO
+        if (formRole === UserRole.SINDICO) {
+          if (!formIdentificador.trim()) {
+            setUserError('Identificador / Usuário de login é obrigatório para o perfil Síndico.');
+            return;
+          }
+          if (!formSenhaInicial) {
+            setUserError('A senha inicial é obrigatória para o perfil Síndico.');
+            return;
+          }
+          if (formSenhaInicial.length < 8) {
+            setUserError('A senha deve possuir no mínimo 8 caracteres.');
+            return;
+          }
+          if (formSenhaInicial.length > 128) {
+            setUserError('A senha não pode ultrapassar 128 caracteres.');
+            return;
+          }
+          if (formSenhaInicial !== formConfirmarSenha) {
+            setUserError('As senhas não coincidem.');
+            return;
+          }
+        }
+
         await api.cadastrarUsuario({
           nome: formNome.trim(),
-          cargo: formCargo.trim() || 'Porteiro',
+          cargo: formCargo.trim() || (formRole === UserRole.SINDICO ? 'Síndico' : 'Porteiro'),
           role: formRole,
           matricula: formMatricula.trim() || undefined,
           tipoTurno: formTipoTurno,
@@ -380,7 +422,15 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
           condominioId,
           adminId: usuarioAtual.id,
           adminNome: usuarioAtual.nome,
+          identificador: formRole === UserRole.SINDICO ? formIdentificador.trim() : undefined,
+          senhaInicial: formRole === UserRole.SINDICO ? formSenhaInicial : undefined,
         });
+
+        // Limpa campos de credenciais após cadastro bem-sucedido
+        setFormIdentificador('');
+        setFormSenhaInicial('');
+        setFormConfirmarSenha('');
+        setShowFormPassword(false);
       }
 
       await carregarUsuarios();
@@ -1132,29 +1182,31 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      {portariaStatus?.bloqueado && (
+                    {usuarioAtual?.role === UserRole.ADMIN && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {portariaStatus?.bloqueado && (
+                          <button
+                            type="button"
+                            onClick={handleDesbloquearPortaria}
+                            disabled={isDesbloqueandoPortaria}
+                            className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all shadow cursor-pointer disabled:opacity-50"
+                          >
+                            <Unlock className="w-4 h-4" />
+                            <span>{isDesbloqueandoPortaria ? 'Desbloqueando...' : 'Desbloquear Acesso'}</span>
+                          </button>
+                        )}
+
                         <button
                           type="button"
-                          onClick={handleDesbloquearPortaria}
-                          disabled={isDesbloqueandoPortaria}
-                          className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl transition-all shadow cursor-pointer disabled:opacity-50"
+                          onClick={() => setIsConfirmGerarCodigoOpen(true)}
+                          disabled={isGerandoCodigo}
+                          className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow cursor-pointer disabled:opacity-50"
                         >
-                          <Unlock className="w-4 h-4" />
-                          <span>{isDesbloqueandoPortaria ? 'Desbloqueando...' : 'Desbloquear Acesso'}</span>
+                          <RotateCcw className="w-4 h-4" />
+                          <span>Gerar Novo Código</span>
                         </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => setIsConfirmGerarCodigoOpen(true)}
-                        disabled={isGerandoCodigo}
-                        className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all shadow cursor-pointer disabled:opacity-50"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        <span>Gerar Novo Código</span>
-                      </button>
-                    </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="p-3 bg-blue-950/40 border border-blue-500/20 rounded-xl text-[11px] text-slate-300 leading-relaxed space-y-1">
@@ -1286,14 +1338,28 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
                   />
                 </div>
 
-                <button
-                  id="btn-novo-usuario"
-                  onClick={handleOpenNewUser}
-                  className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow cursor-pointer transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>CADASTRAR USUÁRIO</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {onOpenAlterarSenha && usuarioAtual?.role === UserRole.SINDICO && (
+                    <button
+                      type="button"
+                      id="btn-alterar-senha-sindico-config"
+                      onClick={onOpenAlterarSenha}
+                      className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-bold px-3 py-2 rounded-xl shadow cursor-pointer transition-all"
+                      title="Alterar minha senha de acesso"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ALTERAR MINHA SENHA</span>
+                    </button>
+                  )}
+                  <button
+                    id="btn-novo-usuario"
+                    onClick={handleOpenNewUser}
+                    className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow cursor-pointer transition-all"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>CADASTRAR USUÁRIO</span>
+                  </button>
+                </div>
               </div>
 
               {/* Form Modal / Inline Form for User */}
@@ -1369,6 +1435,83 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
                         />
                       </div>
                     </div>
+
+                    {/* Credencial de Acesso ao Sistema (Perfil SÍNDICO) */}
+                    {!editingUser && formRole === UserRole.SINDICO && (
+                      <div className="p-3.5 bg-slate-900/90 border border-blue-500/40 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-blue-300 flex items-center gap-1.5 uppercase tracking-wider">
+                            <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                            <span>Credencial de Acesso ao Sistema</span>
+                          </label>
+                          <span className="text-[11px] text-slate-400">
+                            Acesso individual para gestão e auditoria
+                          </span>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                            Identificador / Usuário de Login <span className="text-rose-400">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            id="input-sindico-identificador"
+                            value={formIdentificador}
+                            onChange={(e) => setFormIdentificador(e.target.value)}
+                            placeholder="Ex: sindico.belleville"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:border-blue-500 focus:outline-none"
+                            required
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            Identificador único utilizado no login (aba ADMIN / SÍNDICO).
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                              Senha Inicial <span className="text-rose-400">*</span>
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showFormPassword ? 'text' : 'password'}
+                                id="input-sindico-senha-inicial"
+                                value={formSenhaInicial}
+                                onChange={(e) => setFormSenhaInicial(e.target.value)}
+                                placeholder="Mínimo 8 caracteres"
+                                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 pr-9 text-xs text-white placeholder:text-slate-600 focus:border-blue-500 focus:outline-none"
+                                required
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowFormPassword(!showFormPassword)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 cursor-pointer"
+                                title={showFormPassword ? 'Ocultar senha' : 'Ver senha'}
+                              >
+                                {showFormPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                              Confirmar Senha <span className="text-rose-400">*</span>
+                            </label>
+                            <div className="relative">
+                              <input
+                                type={showFormPassword ? 'text' : 'password'}
+                                id="input-sindico-confirmar-senha"
+                                value={formConfirmarSenha}
+                                onChange={(e) => setFormConfirmarSenha(e.target.value)}
+                                placeholder="Repita a senha inicial"
+                                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 pr-9 text-xs text-white placeholder:text-slate-600 focus:border-blue-500 focus:outline-none"
+                                required
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Shift / Plantão Configuration */}
                     <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl space-y-3">
@@ -2307,7 +2450,7 @@ export const ConfiguracoesModal: React.FC<ConfiguracoesModalProps> = ({
         {/* ========================================================
             MODAL DE CONFIRMAÇÃO DE GERAÇÃO DE NOVO CÓDIGO DA PORTARIA
            ======================================================== */}
-        {isConfirmGerarCodigoOpen && (
+        {isConfirmGerarCodigoOpen && usuarioAtual?.role === UserRole.ADMIN && (
           <div
             id="modal-confirmar-gerar-codigo-portaria"
             className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in"

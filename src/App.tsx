@@ -28,12 +28,13 @@ import { GerenciarPrismasModal } from './components/GerenciarPrismasModal';
 import { AuditoriaModal } from './components/AuditoriaModal';
 import { ConcorrenciaModal } from './components/ConcorrenciaModal';
 import { ConfiguracoesModal } from './components/ConfiguracoesModal';
+import { AlterarSenhaModal } from './components/AlterarSenhaModal';
 import { EditarCondominioModal } from './components/EditarCondominioModal';
 import { FloatingPortariaWindow } from './components/FloatingPortariaWindow';
 import { EscolhaModoDispositivoModal, DeviceUsageMode } from './components/EscolhaModoDispositivoModal';
 import { playSuccessSound } from './utils/sound';
 import { identificarOperadorEmOperacao } from './utils/turnoUtils';
-import { copyToClipboard, formatMensagemEntrega, formatMensagemRecolhimento } from './utils/clipboardUtils';
+import { copyToClipboard, formatMensagemEntrega, formatMensagemRecolhimento, extrairNumeroCasaValido, formatarCasaExibicao } from './utils/clipboardUtils';
 import {
   AlertCircle,
   CheckCircle2,
@@ -81,6 +82,7 @@ function AppContent() {
   // Modals state
   const [selectedPrismaEntrega, setSelectedPrismaEntrega] = useState<Prisma | null>(null);
   const [isSubmittingEntrega, setIsSubmittingEntrega] = useState<boolean>(false);
+  const [rankingCasas, setRankingCasas] = useState<string[]>(['12', '17', '31', '42', '105', '208']);
   const [isReceberLoading, setIsReceberLoading] = useState<boolean>(false);
   const [historicoPrismaId, setHistoricoPrismaId] = useState<string | null>(null);
   const [isPassagemTurnoOpen, setIsPassagemTurnoOpen] = useState<boolean>(false);
@@ -88,6 +90,7 @@ function AppContent() {
   const [isAuditoriaOpen, setIsAuditoriaOpen] = useState<boolean>(false);
   const [isConcorrenciaOpen, setIsConcorrenciaOpen] = useState<boolean>(false);
   const [isConfiguracoesOpen, setIsConfiguracoesOpen] = useState<boolean>(false);
+  const [isAlterarSenhaOpen, setIsAlterarSenhaOpen] = useState<boolean>(false);
   const [isEditarCondominioOpen, setIsEditarCondominioOpen] = useState<boolean>(false);
 
   // Synchronize condominioAtualId with authUser if user is authenticated
@@ -243,6 +246,10 @@ function AppContent() {
 
   // Abertura explícita do Modo Portaria via Document Picture-in-Picture (com fallback)
   const handleAbrirModoPortaria = useCallback(async () => {
+    try {
+      localStorage.setItem('prismas_portaria_minimized', 'true');
+    } catch {}
+
     // 1. Mecanismo prioritário: Document Picture-in-Picture se suportado pelo navegador
     if (typeof window !== 'undefined' && 'documentPictureInPicture' in window && window.documentPictureInPicture) {
       try {
@@ -252,8 +259,8 @@ function AppContent() {
         }
 
         const pip = await window.documentPictureInPicture.requestWindow({
-          width: 420,
-          height: 700,
+          width: 380,
+          height: 130,
         });
 
         copyStylesToPip(pip);
@@ -281,6 +288,21 @@ function AppContent() {
     setIsModoPortariaOpen(true);
     showToast('🛡️ Modo Portaria ativado');
   }, [pipWindow, showToast]);
+
+  // Redimensionamento nativo entre minimizado (380x130) e expandido (420x700) no Document PiP
+  const handlePipResize = useCallback((minimized: boolean) => {
+    if (!pipWindow || pipWindow.closed) return;
+
+    try {
+      if (minimized) {
+        pipWindow.resizeTo(380, 130);
+      } else {
+        pipWindow.resizeTo(420, 700);
+      }
+    } catch (error) {
+      console.warn('[PiP] Falha ao redimensionar janela:', error);
+    }
+  }, [pipWindow]);
 
   // Limpeza de janelas órfãs na desmontagem ou fechamento da aba principal
   useEffect(() => {
@@ -318,7 +340,7 @@ function AppContent() {
     try {
       localStorage.setItem('prismas_device_mode', mode);
       if (mode === 'PORTARIA') {
-        localStorage.setItem('prismas_portaria_minimized', 'false');
+        localStorage.setItem('prismas_portaria_minimized', 'true');
       }
     } catch {}
     setDeviceMode(mode);
@@ -461,6 +483,9 @@ function AppContent() {
         setStats(data.stats);
         setPrismas(data.prismas);
         setUltimasMovimentacoes(data.ultimasMovimentacoes);
+        if (data.rankingCasas && data.rankingCasas.length > 0) {
+          setRankingCasas(data.rankingCasas);
+        }
         setIsOnline(true);
         setErrorMessage(null);
         return data;
@@ -538,6 +563,16 @@ function AppContent() {
         showToast(`✅ Entrega registrada • Mensagem copiada ("${msgCopiada}")`);
       } else {
         showToast(`✅ Prisma ${res.prisma.numero} (${res.prisma.corNome}) entregue para ${params.casa}!`);
+      }
+
+      // Atualização imediata local do ranking inteligente
+      const numValido = extrairNumeroCasaValido(params.casa);
+      if (numValido !== null) {
+        const casaFmt = formatarCasaExibicao(numValido);
+        setRankingCasas((prev) => {
+          const semAtual = prev.filter((c) => c !== casaFmt);
+          return [casaFmt, ...semAtual].slice(0, 6);
+        });
       }
 
       await loadDashboard(false);
@@ -749,6 +784,7 @@ function AppContent() {
           onClose={() => setSelectedPrismaEntrega(null)}
           onConfirmEntrega={handleConfirmEntrega}
           isLoading={isSubmittingEntrega}
+          quickHouses={rankingCasas}
         />
 
         {/* Prisma Histórico Modal inside Popup */}
@@ -795,7 +831,8 @@ function AppContent() {
           isRefreshing={isRefreshing}
           onRefresh={() => loadDashboard(true)}
           onClose={handleCloseModoPortaria}
-          onAbrirEmJanelaDesktop={pipWindow ? undefined : handleAbrirModoPortaria}
+          onAbrirEmJanelaDesktop={undefined}
+          onToggleMinimize={handlePipResize}
           onOpenGerenciamento={() => setIsGerenciamentoOpen(true)}
           ultimasMovimentacoes={ultimasMovimentacoes}
           isStandalonePopup={Boolean(pipWindow)}
@@ -807,6 +844,7 @@ function AppContent() {
           onClose={() => setSelectedPrismaEntrega(null)}
           onConfirmEntrega={handleConfirmEntrega}
           isLoading={isSubmittingEntrega}
+          quickHouses={rankingCasas}
         />
 
         {/* Modal de Histórico do Prisma */}
@@ -905,6 +943,7 @@ function AppContent() {
         onOpenGerenciamento={() => setIsGerenciamentoOpen(true)}
         onOpenConcorrenciaSim={() => setIsConcorrenciaOpen(true)}
         onOpenConfiguracoes={canAccessConfig ? () => setIsConfiguracoesOpen(true) : undefined}
+        onOpenAlterarSenha={() => setIsAlterarSenhaOpen(true)}
         isDevEnvironment={isDevEnvironment}
         isOnline={isOnline}
         onRefresh={() => loadDashboard(true)}
@@ -1066,6 +1105,7 @@ function AppContent() {
         onClose={() => setSelectedPrismaEntrega(null)}
         onConfirmEntrega={handleConfirmEntrega}
         isLoading={isSubmittingEntrega}
+        quickHouses={rankingCasas}
       />
 
       {/* 2. Passagem de Turno Modal */}
@@ -1124,10 +1164,18 @@ function AppContent() {
           usuarioAtual={usuarioAtual}
           onRefreshData={() => loadDashboard(false)}
           onOpenHistoricoById={(id) => setHistoricoPrismaId(id)}
+          onOpenAlterarSenha={() => setIsAlterarSenhaOpen(true)}
           deviceMode={deviceMode}
           onChangeDeviceMode={handleChangeDeviceMode}
         />
       )}
+
+      {/* Modal Alterar Minha Senha (SÍNDICO) */}
+      <AlterarSenhaModal
+        isOpen={isAlterarSenhaOpen}
+        onClose={() => setIsAlterarSenhaOpen(false)}
+        onSuccess={(msg) => showToast(`✅ ${msg}`)}
+      />
 
       {/* 8. Editar Condomínio Modal */}
       <EditarCondominioModal

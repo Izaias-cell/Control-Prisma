@@ -20,6 +20,7 @@ interface EntregaModalProps {
   }) => Promise<void>;
   isLoading: boolean;
   errorMessage?: string | null;
+  quickHouses?: string[];
 }
 
 export const EntregaModal: React.FC<EntregaModalProps> = ({
@@ -28,6 +29,7 @@ export const EntregaModal: React.FC<EntregaModalProps> = ({
   onConfirmEntrega,
   isLoading,
   errorMessage,
+  quickHouses,
 }) => {
   const [casa, setCasa] = useState('');
   const [fotoEvidencia, setFotoEvidencia] = useState<string | null>(null);
@@ -69,8 +71,11 @@ export const EntregaModal: React.FC<EntregaModalProps> = ({
     }
   };
 
-  // Quick house suggestion chips
-  const quickHouses = ['Casa 12', 'Casa 17', 'Casa 31', 'Casa 42', 'Casa 105', 'Casa 208'];
+  // Quick house suggestion chips: utiliza ranking dinâmico de casas ou fallback seguro dentro de 01-311
+  const DEFAULT_QUICK_HOUSES = ['12', '17', '31', '42', '105', '208'];
+  const activeQuickHouses = (quickHouses && quickHouses.length > 0)
+    ? quickHouses.slice(0, 6)
+    : DEFAULT_QUICK_HOUSES;
 
   // Handle Photo Capture / Upload
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -200,12 +205,13 @@ export const EntregaModal: React.FC<EntregaModalProps> = ({
               </button>
             </div>
 
-            {/* Atalhos Rápidos de Casas */}
+            {/* Atalhos Rápidos de Casas (Ranking Inteligente) */}
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
               <span className="text-[11px] text-slate-400 font-medium mr-1">Rápido:</span>
-              {quickHouses.map((item) => (
+              {activeQuickHouses.map((item) => (
                 <button
                   key={item}
+                  id={`btn-rapido-casa-${item}`}
                   type="button"
                   onClick={() => {
                     setCasa(item);

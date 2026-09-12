@@ -527,7 +527,7 @@ export function createExpressApp(): express.Application {
     }
   });
 
-  app.post('/api/condominios/codigo-portaria/gerar', requireAuth, requireRole([UserRole.ADMIN, UserRole.SINDICO]), async (req, res) => {
+  app.post('/api/condominios/codigo-portaria/gerar', requireAuth, requireRole([UserRole.ADMIN]), async (req, res) => {
     const requestedCondoId = req.body.condominioId || req.user?.condominioId || 'condo-1';
     if (req.user?.condominioId && req.body.condominioId && req.body.condominioId !== req.user.condominioId) {
       return res.status(403).json({ error: 'ISOLAMENTO_CONDOMINIO_VIOLADO', message: 'Não é permitido gerar código para outro condomínio.' });
@@ -550,7 +550,7 @@ export function createExpressApp(): express.Application {
     }
   });
 
-  app.post('/api/condominios/codigo-portaria/desbloquear', requireAuth, requireRole([UserRole.ADMIN, UserRole.SINDICO]), async (req, res) => {
+  app.post('/api/condominios/codigo-portaria/desbloquear', requireAuth, requireRole([UserRole.ADMIN]), async (req, res) => {
     const requestedCondoId = req.body.condominioId || req.user?.condominioId || 'condo-1';
     if (req.user?.condominioId && req.body.condominioId && req.body.condominioId !== req.user.condominioId) {
       return res.status(403).json({ error: 'ISOLAMENTO_CONDOMINIO_VIOLADO', message: 'Não é permitido desbloquear acesso de outro condomínio.' });
@@ -571,7 +571,7 @@ export function createExpressApp(): express.Application {
     }
   });
 
-  app.put('/api/condominios/codigo-portaria', requireAuth, requireRole([UserRole.ADMIN, UserRole.SINDICO]), async (req, res) => {
+  app.put('/api/condominios/codigo-portaria', requireAuth, requireRole([UserRole.ADMIN]), async (req, res) => {
     const { codigo } = req.body;
     const requestedCondoId = req.body.condominioId || req.user?.condominioId || 'condo-1';
     if (req.user?.condominioId && req.body.condominioId && req.body.condominioId !== req.user.condominioId) {
@@ -660,6 +660,22 @@ export function createExpressApp(): express.Application {
       });
     } catch (err: any) {
       return handleStorageError(res, err, 'Erro ao consultar status no Supabase.');
+    }
+  });
+
+  // Ranking inteligente das 6 casas que mais utilizam prismas (isolado por condomínio)
+  app.get('/api/condominios/:condominioId/ranking-casas', requireAuth, async (req, res) => {
+    const { condominioId } = req.params;
+    const userCondoId = req.user?.condominioId;
+    const isAdminOrSindico = req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.SINDICO;
+    if (!isAdminOrSindico && userCondoId && userCondoId !== condominioId) {
+      return res.status(403).json({ error: 'Acesso não autorizado ao condomínio informado.' });
+    }
+    try {
+      const ranking = await supabaseStore.getRankingCasasFrequentes(condominioId);
+      return res.json({ success: true, ranking });
+    } catch (err: any) {
+      return handleStorageError(res, err, 'Erro ao consultar ranking de casas no Supabase.');
     }
   });
 
@@ -1206,21 +1222,62 @@ export function createExpressApp(): express.Application {
         paridade12x36,
         horaInicio,
         horaFim,
+        identificador,
+        senhaInicial,
       } = req.body;
 
       if (!nome || !nome.trim()) {
         return res.status(400).json({ error: 'Nome do usuário é obrigatório.' });
       }
 
-      const condominioId = req.user!.condominioId;
+      const condominioId = req.body.condominioId || req.user!.condominioId;
       const adminId = req.user!.usuarioId;
       const adminNome = req.user!.nome;
 
       try {
+        let cleanIdentificador: string | undefined;
+        let senhaHash: string | undefined;
+
+        // Se o perfil for SINDICO, exigir e validar identificador e senha inicial
+        if (role === UserRole.SINDICO) {
+          if (!identificador || typeof identificador !== 'string' || !identificador.trim()) {
+            return res.status(400).json({
+              error: 'IDENTIFICADOR_OBRIGATORIO',
+              message: 'Identificador / Usuário de login é obrigatório para o perfil Síndico.',
+            });
+          }
+          cleanIdentificador = identificador.trim();
+
+          const identJaExiste = await supabaseStore.findCredencialByIdentificador(cleanIdentificador);
+          if (identJaExiste) {
+            return res.status(409).json({
+              error: 'IDENTIFICADOR_JA_EXISTE',
+              message: 'O identificador informado já está em uso.',
+            });
+          }
+
+          if (!senhaInicial || typeof senhaInicial !== 'string') {
+            return res.status(400).json({
+              error: 'SENHA_OBRIGATORIA',
+              message: 'A senha inicial é obrigatória para o perfil Síndico.',
+            });
+          }
+
+          const valSenha = validatePasswordFormat(senhaInicial);
+          if (!valSenha.valid) {
+            return res.status(400).json({
+              error: 'SENHA_INVALIDA',
+              message: valSenha.error || 'A senha deve possuir no mínimo 8 caracteres.',
+            });
+          }
+
+          senhaHash = await hashPassword(senhaInicial);
+        }
+
         const result = await supabaseStore.createUsuario(
           {
             nome: nome.trim(),
-            cargo,
+            cargo: cargo?.trim() || (role === UserRole.SINDICO ? 'Síndico' : 'Porteiro'),
             role,
             matricula,
             tipoTurno,
@@ -1233,9 +1290,40 @@ export function createExpressApp(): express.Application {
           { id: adminId, nome: adminNome }
         );
 
-        return res.status(result.status).json(
-          result.success ? { success: true, usuario: result.usuario } : { error: result.error }
-        );
+        if (!result.success || !result.usuario) {
+          return res.status(result.status || 500).json({
+            error: result.error || 'Erro ao criar usuário.',
+          });
+        }
+
+        // Criar credencial em credenciais_acesso caso perfil seja SINDICO
+        let credencialSanitizada = undefined;
+        if (role === UserRole.SINDICO && cleanIdentificador && senhaHash) {
+          const novaCred = await supabaseStore.createCredencial({
+            usuarioId: result.usuario.id,
+            condominioId: result.usuario.condominioId || condominioId,
+            tipoAcesso: TipoAcesso.SINDICO,
+            identificador: cleanIdentificador,
+            senhaHash,
+            ativo: true,
+          });
+
+          await supabaseStore.logAuditoria({
+            condominioId: result.usuario.condominioId || condominioId,
+            acao: 'CRIACAO_CREDENCIAL_SINDICO',
+            usuarioId: adminId,
+            usuarioNome: adminNome,
+            detalhes: `Credencial de Síndico criada com identificador "${cleanIdentificador}" para o usuário ${result.usuario.nome}.`,
+          });
+
+          credencialSanitizada = supabaseStore.sanitizeCredencial(novaCred);
+        }
+
+        return res.status(result.status || 201).json({
+          success: true,
+          usuario: result.usuario,
+          ...(credencialSanitizada ? { credencial: credencialSanitizada } : {}),
+        });
       } catch (err: any) {
         return handleStorageError(res, err, 'Erro ao criar usuário no Supabase.');
       }
@@ -1525,20 +1613,37 @@ export function createExpressApp(): express.Application {
     }
   );
 
-  // 3. Redefinir senha (ADMIN / SÍNDICO)
+  // 3. Redefinir / Alterar senha (ADMIN / SÍNDICO)
   app.put(
     '/api/credenciais/:id/senha',
     requireAuth,
-    requireRole([UserRole.ADMIN]),
+    requireRole([UserRole.ADMIN, UserRole.SINDICO]),
     async (req, res) => {
-      const condominioId = req.user!.condominioId;
       const { id } = req.params;
-      const { senha, identificador } = req.body;
+      const { senha, senhaAtual, identificador } = req.body;
+      const usuarioIdAuth = req.user!.usuarioId;
+      const roleAuth = req.user!.role;
+      const condominioIdAuth = req.user!.condominioId;
 
       try {
-        const cred = await supabaseStore.findCredencialById(id);
-        if (!cred || (cred.condominioId || 'condo-1') !== condominioId) {
+        let cred: any = null;
+        if (id === 'me') {
+          const creds = await supabaseStore.findCredenciaisByUsuarioId(usuarioIdAuth);
+          cred = creds && creds.length > 0 ? creds[0] : null;
+        } else {
+          cred = await supabaseStore.findCredencialById(id);
+        }
+
+        if (!cred) {
           return res.status(404).json({ error: 'CREDENCIAL_NAO_ENCONTRADA', message: 'Credencial não encontrada.' });
+        }
+
+        // REGRA DE SEGURANÇA: SÍNDICO só pode alterar sua própria credencial!
+        if (roleAuth === UserRole.SINDICO && cred.usuarioId !== usuarioIdAuth) {
+          return res.status(403).json({
+            error: 'ACESSO_NEGADO',
+            message: 'Acesso negado: Você só possui autorização para alterar sua própria senha.',
+          });
         }
 
         if (cred.tipoAcesso === TipoAcesso.PORTARIA) {
@@ -1548,21 +1653,45 @@ export function createExpressApp(): express.Application {
           });
         }
 
+        // Validação da senha atual se for o próprio Síndico ou se senhaAtual foi informada
+        if (roleAuth === UserRole.SINDICO || (id === 'me' && senhaAtual)) {
+          if (!senhaAtual || typeof senhaAtual !== 'string') {
+            return res.status(400).json({
+              error: 'SENHA_ATUAL_OBRIGATORIA',
+              message: 'A senha atual é obrigatória.',
+            });
+          }
+          if (!cred.senhaHash) {
+            return res.status(400).json({
+              error: 'CREDENCIAL_SEM_SENHA',
+              message: 'Credencial não possui senha configurada.',
+            });
+          }
+          const senhaAtualValida = await verifyPassword(senhaAtual, cred.senhaHash);
+          if (!senhaAtualValida) {
+            return res.status(400).json({
+              error: 'SENHA_ATUAL_INCORRETA',
+              message: 'A senha atual informada está incorreta.',
+            });
+          }
+        }
+
         const passValidation = validatePasswordFormat(senha);
         if (!passValidation.valid) {
           return res.status(400).json({
             error: 'SENHA_INVALIDA',
-            message: passValidation.error,
+            message: passValidation.error || 'A nova senha deve possuir no mínimo 8 caracteres.',
           });
         }
 
         const updates: any = {};
         updates.senhaHash = await hashPassword(senha);
 
-        if (identificador && identificador.trim() !== cred.identificador) {
+        // Apenas ADMIN pode alterar identificador da credencial
+        if (roleAuth === UserRole.ADMIN && identificador && identificador.trim() !== cred.identificador) {
           const novoId = identificador.trim();
           const idDuplicado = await supabaseStore.findCredencialByIdentificador(novoId);
-          if (idDuplicado && idDuplicado.id !== id) {
+          if (idDuplicado && idDuplicado.id !== cred.id) {
             return res.status(409).json({
               error: 'IDENTIFICADOR_JA_EXISTE',
               message: `O identificador "${novoId}" já está em uso.`,
@@ -1571,18 +1700,22 @@ export function createExpressApp(): express.Application {
           updates.identificador = novoId;
         }
 
-        const updated = await supabaseStore.updateCredencial(id, updates);
+        const updated = await supabaseStore.updateCredencial(cred.id, updates);
 
         await supabaseStore.logAuditoria({
-          condominioId,
-          acao: 'REDEFINICAO_SENHA',
+          condominioId: cred.condominioId || condominioIdAuth,
+          acao: 'ALTERACAO_SENHA',
           usuarioId: req.user!.usuarioId,
           usuarioNome: req.user!.nome,
-          detalhes: `Senha redefinida para credencial ${cred.identificador}.`,
+          detalhes: `Senha alterada para credencial ${cred.identificador}.`,
         });
 
         const sanitizada = supabaseStore.sanitizeCredencial(updated);
-        return res.json({ success: true, credencial: sanitizada });
+        return res.json({
+          success: true,
+          message: 'Senha alterada com sucesso.',
+          credencial: sanitizada,
+        });
       } catch (err: any) {
         return handleStorageError(res, err, 'Erro ao redefinir senha da credencial.');
       }

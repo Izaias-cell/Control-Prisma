@@ -56,6 +56,7 @@ interface FloatingPortariaWindowProps {
   onRefresh: () => void;
   onClose: () => void;
   onAbrirEmJanelaDesktop?: () => void;
+  onToggleMinimize?: (minimized: boolean) => void;
   ultimasMovimentacoes?: Movimentacao[];
   isStandalonePopup?: boolean;
 }
@@ -87,6 +88,7 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   onRefresh,
   onClose,
   onAbrirEmJanelaDesktop,
+  onToggleMinimize,
   ultimasMovimentacoes = [],
   isStandalonePopup = false,
 }) => {
@@ -136,7 +138,6 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   const [size, setSize] = useState<{ width: number; height: number }>(getInitialSize);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isMinimized, setIsMinimized] = useState<boolean>(() => {
-    if (isStandalonePopup) return false;
     try {
       return localStorage.getItem(STORAGE_MINIMIZED_KEY) === 'true';
     } catch {
@@ -159,6 +160,9 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
       localStorage.setItem(STORAGE_MINIMIZED_KEY, String(min));
     } catch {
       // Ignore localStorage errors
+    }
+    if (onToggleMinimize) {
+      onToggleMinimize(min);
     }
   };
 
@@ -345,7 +349,7 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   // ----------------------------------------------------
   // MINIMIZED STATE: Floating Persistent Operational Popup
   // ----------------------------------------------------
-  if (isMinimized && !isStandalonePopup) {
+  if (isMinimized) {
     const qtdDisponiveis = stats.disponiveis ?? 0;
     const isEsgotado = qtdDisponiveis === 0;
     const isAlertaApenasUm = qtdDisponiveis === 1;
@@ -369,6 +373,45 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
       statusText = '⚠️ Vamos ficar sem prisma, temos apenas 1 disponível';
       statusColor = 'text-amber-200 font-semibold';
       pulseEffect = '';
+    }
+
+    if (isStandalonePopup) {
+      return (
+        <div
+          id="popup-flutuante-portaria-container"
+          className="w-full h-full p-2 flex items-center justify-center bg-slate-950 select-none animate-in fade-in duration-150"
+        >
+          <button
+            type="button"
+            id="btn-restaurar-modo-portaria"
+            onClick={handleClickSmall}
+            className={`w-full h-full flex items-center gap-3 px-3.5 py-2 text-white rounded-2xl shadow-xl border-2 transition-all group ring-2 text-left cursor-pointer hover:scale-[1.01] ${popupBg} ${pulseEffect}`}
+            title="Clique para expandir o Modo Portaria"
+          >
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm shadow-md flex-shrink-0 group-hover:scale-105 transition-transform pointer-events-none ${iconBg}`}
+            >
+              {isEsgotado ? '🚨' : isAlertaApenasUm ? '⚠️' : '🔷'}
+            </div>
+            <div className="flex flex-col items-start leading-tight min-w-0 pr-1 pointer-events-none flex-1">
+              <div className="flex items-center justify-between w-full">
+                <span className="text-[10px] font-black tracking-wider uppercase text-slate-300 flex items-center gap-1">
+                  🛡️ CONTROL PRISMA • PORTARIA
+                </span>
+                <span className="text-[9px] font-bold text-blue-400 bg-blue-950/80 px-1.5 py-0.5 rounded border border-blue-800/60">
+                  EXPANDIR ⤢
+                </span>
+              </div>
+              <span className={`text-xs mt-0.5 leading-snug break-words ${statusColor}`}>
+                {statusText}
+              </span>
+              <span className="text-[9px] text-slate-400 group-hover:text-white transition-colors mt-0.5 font-medium">
+                Clique para expandir o painel operacional
+              </span>
+            </div>
+          </button>
+        </div>
+      );
     }
 
     return (
@@ -508,16 +551,14 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
             </button>
           )}
 
-          {!isStandalonePopup && (
-            <button
-              type="button"
-              onClick={() => handleToggleMinimize(true)}
-              className="p-1.5 text-slate-400 hover:text-amber-300 bg-slate-800/80 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-              title="Minimizar para botão flutuante"
-            >
-              <Minus className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => handleToggleMinimize(true)}
+            className="p-1.5 text-slate-400 hover:text-amber-300 bg-slate-800/80 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+            title="Minimizar Modo Portaria"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
 
           <button
             type="button"

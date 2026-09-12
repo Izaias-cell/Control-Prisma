@@ -17,6 +17,7 @@ import {
   Sun,
   LogOut,
   ShieldCheck,
+  KeyRound,
 } from 'lucide-react';
 import { Condominio, Turno, Usuario, UserRole, OperadorIdentificado, TipoTurno, Paridade12x36, AuthUserContext, TipoSessao } from '../types';
 
@@ -34,6 +35,7 @@ interface HeaderProps {
   onOpenGerenciamento: () => void;
   onOpenConcorrenciaSim: () => void;
   onOpenConfiguracoes?: () => void;
+  onOpenAlterarSenha?: () => void;
   isDevEnvironment?: boolean;
   isOnline: boolean;
   onRefresh: () => void;
@@ -56,6 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGerenciamento,
   onOpenConcorrenciaSim,
   onOpenConfiguracoes,
+  onOpenAlterarSenha,
   isDevEnvironment = false,
   isOnline,
   onRefresh,
@@ -213,6 +216,20 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </div>
               </div>
+            )}
+
+            {/* Botão Alterar Senha (SÍNDICO) */}
+            {onOpenAlterarSenha && authUser && (authUser.role === UserRole.SINDICO || authUser.tipoSessao === TipoSessao.SINDICO) && (
+              <button
+                type="button"
+                id="btn-alterar-senha-header"
+                onClick={onOpenAlterarSenha}
+                className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700 text-amber-300 hover:text-amber-200 rounded-xl cursor-pointer transition-all shadow-sm flex items-center gap-1.5"
+                title="Alterar Minha Senha"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline text-[10px] font-bold uppercase">Senha</span>
+              </button>
             )}
 
             {/* Botão de Logout */}
