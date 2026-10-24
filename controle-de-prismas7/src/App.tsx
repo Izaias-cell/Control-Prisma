@@ -34,7 +34,7 @@ import { FloatingPortariaWindow } from './components/FloatingPortariaWindow';
 import { EscolhaModoDispositivoModal, DeviceUsageMode } from './components/EscolhaModoDispositivoModal';
 import { playSuccessSound } from './utils/sound';
 import { identificarOperadorEmOperacao } from './utils/turnoUtils';
-import { copyToClipboard, formatMensagemEntrega, formatMensagemRecolhimento, extrairNumeroCasaValido, formatarCasaExibicao } from './utils/clipboardUtils';
+import { copyToClipboard, formatMensagemEntrega, formatMensagemRecolhimento, formatMensagemRecolhimentoMultiplo, extrairNumeroCasaValido, formatarCasaExibicao } from './utils/clipboardUtils';
 import {
   AlertCircle,
   CheckCircle2,
@@ -64,6 +64,7 @@ function AppContent() {
 
   // Navigation & UI state
   const [activeTab, setActiveTab] = useState<MainActionTab>('ENTREGAR');
+  const [isModoMultiplo, setIsModoMultiplo] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedFilter, setSelectedFilter] = useState<string | undefined>();
   const [isOnline, setIsOnline] = useState<boolean>(true);
@@ -667,6 +668,101 @@ function AppContent() {
       setIsReceberLoading(false);
     }
   };
+  // FLUXO DEVOLVER / RECOLHER MÚLTIPLOS PRISMAS (ATÉ 3)
+  const handleReceberMultiplosPrismas = async (prismasSelecionados: Prisma[]) => {
+    if (!prismasSelecionados || prismasSelecionados.length === 0) return;
+
+    // Snapshot prévio dos dados completos (número, casa, cor) indexados por ID
+    const prismasSnapshot = prismasSelecionados.map((p) => ({
+      id: p.id,
+      numero: p.numero,
+      corNome: p.corNome,
+      casa: p.casaAtual || '',
+      estado: p.estado,
+    }));
+
+    setIsReceberLoading(true);
+
+    const sucessos: Array<{ id: string; numero: string; corNome?: string; casa: string }> = [];
+    const falhas: Array<{ id: string; numero: string; erro: string }> = [];
+
+    // Processamento sequencial cirúrgico
+    for (const item of prismasSnapshot) {
+      if (receivingPrismaIdsRef.current.has(item.id)) {
+        continue;
+      }
+      receivingPrismaIdsRef.current.add(item.id);
+
+      try {
+        const res = await api.receberPrisma({ prismaId: item.id });
+        if (res && res.success !== false) {
+          const casaFinal = res.movimentacao?.casa || res.prisma?.casaAtual || item.casa || '';
+          sucessos.push({
+            id: item.id,
+            numero: res.prisma?.numero || item.numero,
+            corNome: res.prisma?.corNome || item.corNome,
+            casa: casaFinal,
+          });
+        } else {
+          falhas.push({
+            id: item.id,
+            numero: item.numero,
+            erro: 'Erro na resposta da baixa',
+          });
+        }
+      } catch (err: any) {
+        falhas.push({
+          id: item.id,
+          numero: item.numero,
+          erro: err.message || (err.status === 409 ? 'Prisma já devolvido' : 'Erro ao devolver'),
+        });
+      } finally {
+        receivingPrismaIdsRef.current.delete(item.id);
+      }
+    }
+
+    try {
+      // 1. Som de sucesso se ao menos um teve êxito
+      if (sucessos.length > 0) {
+        playSuccessSound();
+      }
+
+      // 2. Cópia automática apenas das baixas que obtiveram sucesso
+      const deveCopiar = condominioAtual?.mostrarMensagem !== false;
+      if (deveCopiar && sucessos.length > 0) {
+        const itensParaCopiar = sucessos.map((s) => ({
+          numero: s.numero,
+          corNome: s.corNome,
+          casa: s.casa,
+        }));
+        const msgWhatsapp = formatMensagemRecolhimentoMultiplo(itensParaCopiar);
+        await copyToClipboard(msgWhatsapp);
+      }
+
+      // 3. Feedback visual (Toast) dinâmico
+      if (falhas.length === 0) {
+        showToast(`✅ ${sucessos.length} ${sucessos.length === 1 ? 'prisma recolhido' : 'prismas recolhidos'}\nDisponíveis novamente.`);
+      } else if (sucessos.length > 0) {
+        showToast(`⚠️ ${sucessos.length} baixas realizadas, mas ${falhas.length} falharam.\nVerifique o painel.`);
+      } else {
+        showToast(`❌ Não foi possível registrar as baixas.\nAtualizando painel...`);
+      }
+
+      // 4. Sincronização em tempo real do painel
+      try {
+        await loadDashboard(false);
+      } catch (dashErr) {
+        console.error('Erro ao atualizar painel após baixas múltiplas:', dashErr);
+      }
+
+      // 5. Desativar modo múltiplo e retornar incondicionalmente à tela principal de prismas DISPONÍVEIS (ENTREGAR)
+      setIsModoMultiplo(false);
+      setActiveTab('ENTREGAR');
+    } finally {
+      setIsReceberLoading(false);
+    }
+  };
+
 
   // REGISTRAR PENDÊNCIA
   const handleRegistrarPendencia = async (prismaId: string, motivo: string) => {
@@ -700,6 +796,16 @@ function AppContent() {
       alert(err.message || 'Erro ao resolver pendência.');
     }
   };
+
+  const handleToggleModoMultiplo = useCallback(() => {
+    setIsModoMultiplo((prev) => {
+      const next = !prev;
+      if (next && activeTab !== 'RECEBER') {
+        setActiveTab('RECEBER');
+      }
+      return next;
+    });
+  }, [activeTab]);
 
   // ASSUMIR TURNO
   const handleConfirmAssumirTurno = async (params: {
@@ -807,6 +913,9 @@ function AppContent() {
           onSelectPrismaEntrega={(p) => setSelectedPrismaEntrega(p)}
           onReceberPrisma={handleReceberPrisma}
           isReceberLoading={isReceberLoading}
+          isModoMultiplo={isModoMultiplo}
+          onToggleModoMultiplo={handleToggleModoMultiplo}
+          onReceberMultiplosPrismas={handleReceberMultiplosPrismas}
           onRegistrarPendencia={handleRegistrarPendencia}
           onResolverPendencia={handleResolverPendencia}
           onOpenHistoricoById={(id) => setHistoricoPrismaId(id)}
@@ -870,6 +979,9 @@ function AppContent() {
           onSelectPrismaEntrega={(p) => setSelectedPrismaEntrega(p)}
           onReceberPrisma={handleReceberPrisma}
           isReceberLoading={isReceberLoading}
+          isModoMultiplo={isModoMultiplo}
+          onToggleModoMultiplo={handleToggleModoMultiplo}
+          onReceberMultiplosPrismas={handleReceberMultiplosPrismas}
           onRegistrarPendencia={handleRegistrarPendencia}
           onResolverPendencia={handleResolverPendencia}
           onOpenHistoricoById={(id) => setHistoricoPrismaId(id)}
@@ -1047,6 +1159,9 @@ function AppContent() {
             if (tab !== 'BUSCAR') {
               setSearchTerm('');
             }
+            if (tab !== 'RECEBER') {
+              setIsModoMultiplo(false);
+            }
           }}
           countDisponiveis={statsProcessados.disponiveis}
           countEmUso={statsProcessados.emUso}
@@ -1059,6 +1174,8 @@ function AppContent() {
             setSearchTerm('');
             setActiveTab('ENTREGAR');
           }}
+          isModoMultiplo={isModoMultiplo}
+          onToggleModoMultiplo={handleToggleModoMultiplo}
         />
 
         {/* 3. PRIMARY OPERATIONAL STAGE */}
@@ -1100,6 +1217,9 @@ function AppContent() {
               onReceberPrisma={handleReceberPrisma}
               isLoading={isReceberLoading}
               onOpenHistorico={(prisma) => setHistoricoPrismaId(prisma.id)}
+              isModoMultiplo={isModoMultiplo}
+              onToggleModoMultiplo={handleToggleModoMultiplo}
+              onReceberMultiplosPrismas={handleReceberMultiplosPrismas}
             />
           )}
 

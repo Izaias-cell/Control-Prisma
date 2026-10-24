@@ -47,6 +47,9 @@ interface FloatingPortariaWindowProps {
     options?: { origin?: 'CARD' | 'BUTTON' }
   ) => Promise<void>;
   isReceberLoading: boolean;
+  isModoMultiplo?: boolean;
+  onToggleModoMultiplo?: () => void;
+  onReceberMultiplosPrismas?: (prismas: Prisma[]) => Promise<void>;
   onRegistrarPendencia: (prismaId: string, motivo: string) => Promise<void>;
   onResolverPendencia: (prismaId: string) => Promise<void>;
   onOpenHistoricoById: (prismaId: string) => void;
@@ -79,6 +82,9 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
   onSelectPrismaEntrega,
   onReceberPrisma,
   isReceberLoading,
+  isModoMultiplo,
+  onToggleModoMultiplo,
+  onReceberMultiplosPrismas,
   onRegistrarPendencia,
   onResolverPendencia,
   onOpenHistoricoById,
@@ -627,6 +633,8 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
           searchTerm={searchTerm}
           onSearchChange={onSearchChange}
           onCloseSearch={onCloseSearch}
+          isModoMultiplo={isModoMultiplo}
+          onToggleModoMultiplo={onToggleModoMultiplo}
         />
 
         {/* PALCO OPERACIONAL */}
@@ -666,6 +674,9 @@ export const FloatingPortariaWindow: React.FC<FloatingPortariaWindowProps> = ({
               onReceberPrisma={onReceberPrisma}
               isLoading={isReceberLoading}
               onOpenHistorico={(p) => onOpenHistoricoById(p.id)}
+              isModoMultiplo={isModoMultiplo}
+              onToggleModoMultiplo={onToggleModoMultiplo}
+              onReceberMultiplosPrismas={onReceberMultiplosPrismas}
             />
           )}
 

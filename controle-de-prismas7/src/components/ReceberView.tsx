@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Prisma, PrismaEstado } from '../types';
 import { PrismaVisual } from './PrismaVisual';
 import { PrismaTooltip, getPrismaTooltipPlainText } from './PrismaTooltip';
@@ -10,6 +10,8 @@ import {
   Camera,
   AlertCircle,
   Search,
+  ListChecks,
+  Check,
 } from 'lucide-react';
 
 interface ReceberViewProps {
@@ -22,6 +24,9 @@ interface ReceberViewProps {
   ) => Promise<void>;
   isLoading: boolean;
   onOpenHistorico: (prisma: Prisma) => void;
+  isModoMultiplo?: boolean;
+  onToggleModoMultiplo?: () => void;
+  onReceberMultiplosPrismas?: (prismas: Prisma[]) => Promise<void>;
 }
 
 export const ReceberView: React.FC<ReceberViewProps> = ({
@@ -31,10 +36,24 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
   onReceberPrisma,
   isLoading,
   onOpenHistorico,
+  isModoMultiplo = false,
+  onToggleModoMultiplo,
+  onReceberMultiplosPrismas,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [processingPrismaId, setProcessingPrismaId] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [selectedPrismaIds, setSelectedPrismaIds] = useState<string[]>([]);
+  const [limitWarning, setLimitWarning] = useState<string | null>(null);
+  const [isConfirmingMultiplo, setIsConfirmingMultiplo] = useState(false);
+
+  // Limpa a seleção e avisos quando o modo múltiplo for desativado
+  useEffect(() => {
+    if (!isModoMultiplo) {
+      setSelectedPrismaIds([]);
+      setLimitWarning(null);
+    }
+  }, [isModoMultiplo]);
 
   // REGRA DEFINITIVA: A área RECOLHER deve listar TODOS os prismas que estão atualmente com moradores
   // e que podem ser devolvidos à portaria: EM USO + PENDENTES.
@@ -79,7 +98,7 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
 
   const processingRef = useRef<Set<string>>(new Set());
 
-  // Baixa direta e imediata pelo CARD ou pelo botão interno
+  // Baixa direta e imediata pelo CARD ou pelo botão interno (Modo Normal)
   const handleBaixaDireta = async (prisma: Prisma) => {
     if (processingRef.current.has(prisma.id) || processingPrismaId || isLoading) return;
 
@@ -97,6 +116,70 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
     }
   };
 
+  // Clique no card: bifurcação entre modo normal e modo múltiplo
+  const handleCardClick = (prisma: Prisma) => {
+    if (isModoMultiplo) {
+      if (isConfirmingMultiplo || isLoading) return;
+      const isSelected = selectedPrismaIds.includes(prisma.id);
+      if (isSelected) {
+        setSelectedPrismaIds((prev) => prev.filter((id) => id !== prisma.id));
+        setLimitWarning(null);
+      } else {
+        if (selectedPrismaIds.length >= 3) {
+          setLimitWarning('Limite máximo de 3 prismas por operação atingido. Desmarque um para selecionar outro.');
+          return;
+        }
+        setSelectedPrismaIds((prev) => [...prev, prisma.id]);
+        setLimitWarning(null);
+      }
+    } else {
+      handleBaixaDireta(prisma);
+    }
+  };
+
+  // Cancelar seleção do modo múltiplo
+  const handleCancelarSelecao = () => {
+    setSelectedPrismaIds([]);
+    setLimitWarning(null);
+    if (onToggleModoMultiplo) {
+      onToggleModoMultiplo();
+    }
+  };
+
+  // Prismas selecionados no modo múltiplo na ordem exata de seleção
+  const selectedPrismas = useMemo(() => {
+    return selectedPrismaIds
+      .map((id) => rawList.find((p) => p.id === id))
+      .filter((p): p is Prisma => Boolean(p));
+  }, [selectedPrismaIds, rawList]);
+
+  // Rótulo do botão de confirmação com a numeração real dos prismas selecionados
+  const confirmButtonLabel = useMemo(() => {
+    if (selectedPrismas.length === 0) {
+      return 'CONFIRMAR BAIXAS (0)';
+    }
+    const numeros = selectedPrismas.map((p) => p.numero).join(', ');
+    return `CONFIRMAR BAIXAS (${numeros})`;
+  }, [selectedPrismas]);
+
+  // Confirmar baixas múltiplas
+  const handleConfirmarBaixas = async () => {
+    if (selectedPrismas.length === 0 || isConfirmingMultiplo || isLoading) return;
+    setIsConfirmingMultiplo(true);
+    setGlobalError(null);
+    setLimitWarning(null);
+    try {
+      if (onReceberMultiplosPrismas) {
+        await onReceberMultiplosPrismas(selectedPrismas);
+        setSelectedPrismaIds([]);
+      }
+    } catch (err: any) {
+      setGlobalError(err.message || 'Erro ao processar baixas múltiplas.');
+    } finally {
+      setIsConfirmingMultiplo(false);
+    }
+  };
+
   return (
     <div id="view-recolher-prisma" className="space-y-3">
       {/* Quick filter input */}
@@ -110,6 +193,86 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
             placeholder="Filtrar por nº, cor ou casa..."
             className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:border-blue-500 outline-none shadow-2xs font-medium"
           />
+        </div>
+      )}
+
+      {/* Barra de Ações do Modo Múltiplo */}
+      {isModoMultiplo && (
+        <div
+          id="toolbar-baixas-multiplas"
+          className="p-3 bg-gradient-to-r from-blue-900 to-indigo-950 text-white rounded-xl shadow-sm border border-blue-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-blue-800/90 text-amber-300 ring-1 ring-blue-600 shadow-xs flex-shrink-0">
+              <ListChecks className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
+                  Baixas Múltiplas
+                </span>
+                <span className="text-[10px] font-black bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded-full uppercase">
+                  Até 3
+                </span>
+              </div>
+              <div className="text-xs sm:text-sm font-black text-white mt-0.5">
+                {selectedPrismaIds.length} de 3 selecionados
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 justify-end flex-wrap">
+            <button
+              type="button"
+              id="btn-cancelar-baixas-multiplas"
+              onClick={handleCancelarSelecao}
+              disabled={isConfirmingMultiplo || isLoading}
+              className="py-1.5 px-3 rounded-lg text-xs font-bold text-slate-300 hover:text-white bg-slate-800/90 hover:bg-slate-700 active:bg-slate-900 border border-slate-600 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancelar Seleção
+            </button>
+
+            <button
+              type="button"
+              id="btn-confirmar-baixas-multiplas"
+              onClick={handleConfirmarBaixas}
+              disabled={selectedPrismaIds.length === 0 || isConfirmingMultiplo || isLoading}
+              className={`py-1.5 px-3.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 shadow-xs ${
+                selectedPrismaIds.length > 0 && !isConfirmingMultiplo && !isLoading
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer active:scale-95 ring-2 ring-emerald-400/40'
+                  : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60'
+              }`}
+            >
+              {isConfirmingMultiplo ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>REGISTRANDO BAIXAS...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>{confirmButtonLabel}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Alerta discreto de limite de 3 atingido */}
+      {isModoMultiplo && limitWarning && (
+        <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span>{limitWarning}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLimitWarning(null)}
+            className="text-[11px] font-bold text-amber-800 hover:underline cursor-pointer"
+          >
+            OK
+          </button>
         </div>
       )}
 
@@ -146,22 +309,40 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
           {filtered.map((prisma) => {
             const isBeingProcessed = processingPrismaId === prisma.id;
-            const isAnyProcessing = processingPrismaId !== null || isLoading;
+            const isAnyProcessing = processingPrismaId !== null || isLoading || isConfirmingMultiplo;
+            const isSelected = isModoMultiplo && selectedPrismaIds.includes(prisma.id);
 
             return (
               <div
                 key={prisma.id}
                 id={`card-recolher-${prisma.id}`}
-                onClick={() => handleBaixaDireta(prisma)}
+                onClick={() => handleCardClick(prisma)}
                 className={`rounded-xl p-3 sm:p-3.5 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between cursor-pointer group relative ${
-                  prisma.estado === PrismaEstado.PENDENTE
+                  isSelected
+                    ? 'bg-blue-50/90 border-2 border-blue-600 shadow-md ring-2 ring-blue-500/40'
+                    : prisma.estado === PrismaEstado.PENDENTE
                     ? 'bg-amber-50/50 hover:bg-amber-100/60 border-2 border-amber-300 hover:border-amber-400'
                     : 'bg-white hover:bg-slate-50 border border-slate-200 hover:border-blue-400'
-                } ${isAnyProcessing ? 'pointer-events-none opacity-80' : ''}`}
+                } ${isAnyProcessing && !isModoMultiplo ? 'pointer-events-none opacity-80' : ''}`}
               >
                 <div>
-                  {/* Top Bar: Status */}
-                  <div className="flex items-center justify-end mb-1.5">
+                  {/* Top Bar: Status + Badge de Seleção no Modo Múltiplo */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    {isModoMultiplo ? (
+                      isSelected ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-blue-600 text-white flex items-center gap-1 shadow-xs">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                          SELECIONADO ({selectedPrismaIds.indexOf(prisma.id) + 1}/3)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-slate-400 px-1">
+                          Não selecionado
+                        </span>
+                      )
+                    ) : (
+                      <div />
+                    )}
+
                     <span
                       className={`text-[10px] sm:text-[11px] font-bold px-2 py-0.2 rounded-full uppercase border ${
                         prisma.estado === PrismaEstado.PENDENTE
@@ -231,7 +412,17 @@ export const ReceberView: React.FC<ReceberViewProps> = ({
                   </button>
 
                   <div className="flex items-center gap-1.5 min-w-0">
-                    {isBeingProcessed ? (
+                    {isModoMultiplo ? (
+                      isSelected ? (
+                        <span className="text-[11px] sm:text-xs font-bold text-blue-700 select-none truncate">
+                          ✓ Selecionado para baixa (clique para remover)
+                        </span>
+                      ) : (
+                        <span className="text-[11px] sm:text-xs font-semibold text-slate-500 select-none truncate">
+                          👆 Clique para selecionar
+                        </span>
+                      )
+                    ) : isBeingProcessed ? (
                       <div
                         className={`flex items-center gap-1.5 text-xs font-black ${
                           prisma.estado === PrismaEstado.PENDENTE ? 'text-amber-800' : 'text-blue-700'
