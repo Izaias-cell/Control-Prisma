@@ -51,7 +51,7 @@ export function formatarNumeroCasa(casa: string): string {
 export function formatMensagemEntrega(numero: string, corNome: string, casa: string): string {
   const num = String(numero || '').trim();
   const casaLimpa = formatarNumeroCasa(casa);
-  return `Casa ${casaLimpa} retirou prisma ${num}.`;
+  return `🔹 Casa ${casaLimpa} retirou prisma ${num}.`;
 }
 
 /**
@@ -61,8 +61,35 @@ export function formatMensagemEntrega(numero: string, corNome: string, casa: str
 export function formatMensagemRecolhimento(numero: string, corNome: string, casa: string): string {
   const num = String(numero || '').trim();
   const casaLimpa = formatarNumeroCasa(casa);
-  return `Casa ${casaLimpa} entregou prisma ${num}.`;
+  return `🔹 Casa ${casaLimpa} entregou prisma ${num}.`;
 }
+
+export interface ItemBaixaMultipla {
+  numero: string;
+  corNome?: string;
+  casa: string;
+}
+
+/**
+ * Formata a mensagem consolidada de DEVOLUÇÃO MÚLTIPLA de prismas (até 3) para WhatsApp
+ * Formato padrão:
+ * Baixas de prismas realizadas:
+ *
+ * • Casa 294 entregou prisma 09.
+ * • Casa 108 entregou prisma 14.
+ * • Casa 321 entregou prisma 22.
+ */
+export function formatMensagemRecolhimentoMultiplo(itens: ItemBaixaMultipla[]): string {
+  const linhas = (itens || []).map((item) => {
+    const num = String(item.numero || '').trim();
+    const casaLimpa = formatarNumeroCasa(item.casa);
+    return `🔹 Casa ${casaLimpa} entregou prisma ${num}.`;
+  });
+
+  return `Baixas de prismas realizadas:\n\n${linhas.join('\n')}`;
+}
+
+export const copiarMensagemBaixasMultiplas = formatMensagemRecolhimentoMultiplo;
 
 /**
  * Valida e extrai número de casa no intervalo permitido de 01 a 311.

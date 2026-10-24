@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { ArrowUpRight, ArrowDownLeft, Navigation, AlertTriangle, Search, X } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Navigation, AlertTriangle, Search, X, ListChecks } from 'lucide-react';
 import { Prisma, PrismaEstado } from '../types';
 import { getCorConfig } from '../constants/cores';
 import { sortPrismasNumericos } from '../utils/prismaSort';
@@ -18,6 +18,8 @@ interface ActionSelectorProps {
   searchTerm?: string;
   onSearchChange?: (term: string) => void;
   onCloseSearch?: () => void;
+  isModoMultiplo?: boolean;
+  onToggleModoMultiplo?: () => void;
 }
 
 /**
@@ -98,6 +100,8 @@ export const ActionSelector: React.FC<ActionSelectorProps> = ({
   searchTerm = '',
   onSearchChange,
   onCloseSearch,
+  isModoMultiplo = false,
+  onToggleModoMultiplo,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -279,11 +283,18 @@ export const ActionSelector: React.FC<ActionSelectorProps> = ({
         {/* =========================================================================
             LINHA 2 - COLUNA 2: RECOLHER (BOTÃO OPERACIONAL DE BAIXA)
             ========================================================================= */}
-        <button
+        <div
           id="btn-card-recolher"
-          type="button"
+          role="button"
+          tabIndex={0}
           onClick={() => onSelectTab('RECEBER')}
-          className={`flex flex-col justify-between p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer h-24 sm:h-26 ${
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSelectTab('RECEBER');
+            }
+          }}
+          className={`flex flex-col justify-between p-2.5 sm:p-3 rounded-2xl border text-left transition-all cursor-pointer h-24 sm:h-26 select-none ${
             activeTab === 'RECEBER'
               ? 'bg-blue-600 text-white border-blue-700 shadow-md ring-2 ring-blue-500/50'
               : 'bg-white hover:bg-blue-50 text-slate-800 border-slate-200 hover:border-blue-300 shadow-2xs'
@@ -312,16 +323,45 @@ export const ActionSelector: React.FC<ActionSelectorProps> = ({
             </span>
           </div>
 
-          <div className="mt-auto">
+          <div className="mt-auto flex items-center justify-between w-full min-w-0">
             <span
-              className={`text-[10px] sm:text-xs font-semibold block leading-tight ${
+              className={`text-[10px] sm:text-xs font-semibold block leading-tight truncate ${
                 activeTab === 'RECEBER' ? 'text-blue-100' : 'text-slate-500'
               }`}
             >
               Baixa na portaria
             </span>
+
+            {/* Região secundária: acionamento discreto de Baixas Múltiplas */}
+            {onToggleModoMultiplo && (
+              <span
+                id="btn-toggle-modo-multiplo"
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleModoMultiplo();
+                }}
+                className={`flex-shrink-0 p-1 rounded-md transition-all cursor-pointer flex items-center justify-center ${
+                  isModoMultiplo
+                    ? activeTab === 'RECEBER'
+                      ? 'bg-blue-800 text-amber-300 ring-1 ring-amber-400 shadow-xs'
+                      : 'bg-blue-600 text-white ring-1 ring-blue-500 shadow-xs'
+                    : activeTab === 'RECEBER'
+                    ? 'text-blue-200/50 hover:text-white hover:bg-blue-700/60'
+                    : 'text-slate-400/50 hover:text-blue-600 hover:bg-blue-100/60'
+                }`}
+                title={
+                  isModoMultiplo
+                    ? 'Desativar modo de baixas múltiplas'
+                    : 'Ativar modo de baixas múltiplas (até 3 prismas)'
+                }
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+              </span>
+            )}
           </div>
-        </button>
+        </div>
       </div>
 
       {/* =========================================================================
